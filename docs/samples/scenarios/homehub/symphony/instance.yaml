@@ -1,8 +1,0 @@
-apiVersion: solution.symphony/v1
-kind: Instance
-metadata:
-  name: homehub-instance
-spec:
-  solution: home-hub
-  target:
-    name: mac-book

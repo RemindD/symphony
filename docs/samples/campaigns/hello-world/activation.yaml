@@ -1,8 +1,0 @@
-apiVersion: workflow.symphony/v1
-kind: Activation
-metadata:
-  name: hello-world-activation
-spec:
-  campaign: "hello-world"
-  inputs:
-        foo: "bar" 

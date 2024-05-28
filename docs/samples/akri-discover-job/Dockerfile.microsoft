@@ -1,6 +1,0 @@
-FROM mcr.microsoft.com/cbl-mariner/base/core:2.0
-# https://github.com/microsoft/CBL-Mariner/issues/3563
-RUN tdnf install -y openssl ca-certificates
-ADD ./discover-job /
-
-CMD ["/discover-job"]

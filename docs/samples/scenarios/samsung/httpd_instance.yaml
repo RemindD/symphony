@@ -1,9 +1,0 @@
-apiVersion: solution.symphony/v1
-kind: Instance
-metadata:
-  name: myapplication-httpd
-spec:
-  solution: myapplication-httpd
-  target: 
-    selector:
-      group: group-2
