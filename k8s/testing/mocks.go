@@ -90,6 +90,7 @@ func CreateFakeKubeClientForSolutionAndFabricGroup(objects ...client.Object) cli
 	clientObj := []client.Object{
 		&solution_v1.Instance{},
 		&fabric_v1.Target{},
+		&solution_v1.Solution{},
 	}
 	return fake.NewClientBuilder().
 		WithObjects(objects...).
@@ -110,6 +111,7 @@ func CreateFakeKubeClientForSolutionGroup(objects ...client.Object) client.Clien
 	_ = solution_v1.AddToScheme(scheme)
 	clientObj := []client.Object{
 		&solution_v1.Instance{},
+		&solution_v1.Solution{},
 	}
 	return fake.NewClientBuilder().
 		WithObjects(objects...).
