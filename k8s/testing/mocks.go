@@ -103,9 +103,14 @@ func CreateFakeKubeClientForSolutionGroup(objects ...client.Object) client.Clien
 	}
 
 	_ = solution_v1.AddToScheme(scheme)
+	clientObj := []client.Object{
+		&solution_v1.Instance{},
+		&fabric_v1.Target{},
+	}
 	return fake.NewClientBuilder().
 		WithObjects(objects...).
 		WithScheme(scheme).
+		WithStatusSubresource(clientObj...).
 		Build()
 }
 
