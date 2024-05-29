@@ -1,8 +1,8 @@
 module github.com/eclipse-symphony/symphony/packages/mage
 
-go 1.21
+go 1.22.0
 
-toolchain go1.21.3
+toolchain go1.22.3
 
 require (
 	github.com/magefile/mage v1.15.0
@@ -16,5 +16,5 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
-	golang.org/x/sys v0.15.0 // indirect
+	golang.org/x/sys v0.18.0 // indirect
 )
