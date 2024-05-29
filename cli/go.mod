@@ -2,8 +2,6 @@ module github.com/eclipse-symphony/symphony/cli
 
 go 1.21
 
-toolchain go1.21.3
-
 replace github.com/eclipse-symphony/symphony/api => ../api
 
 replace github.com/eclipse-symphony/symphony/coa => ../coa
