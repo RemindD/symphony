@@ -37,7 +37,10 @@
           "host": "{{ include "symphony.redisHost" . }}",
           "requireTLS": false,
           "password": "",
-          "numberOfWorkers": 1
+          "numberOfWorkers": 1,
+          "queueDepth": 10,
+          "processingTimeout": "15s",
+          "redeliverInterval": "1s"
         }
       }
       {{- else }}

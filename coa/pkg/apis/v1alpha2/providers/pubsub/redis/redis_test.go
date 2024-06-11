@@ -311,4 +311,27 @@ func TestRedisPubSubProviderConfigFromMap(t *testing.T) {
 	assert.Equal(t, "test-consumer", config.ConsumerID)
 	assert.Equal(t, time.Duration(10), config.ProcessingTimeout)
 	assert.Equal(t, time.Duration(10), config.RedeliverInterval)
+
+	configMap = map[string]string{
+		"name":              "test",
+		"host":              "localhost:6379",
+		"password":          "123",
+		"requiresTLS":       "true",
+		"numberOfWorkers":   "1",
+		"queueDepth":        "10",
+		"consumerID":        "test-consumer",
+		"processingTimeout": "10s",
+		"redeliverInterval": "10s",
+	}
+	config, err = RedisPubSubProviderConfigFromMap(configMap)
+	assert.Nil(t, err)
+	assert.Equal(t, "test", config.Name)
+	assert.Equal(t, "localhost:6379", config.Host)
+	assert.Equal(t, "123", config.Password)
+	assert.Equal(t, true, config.RequiresTLS)
+	assert.Equal(t, 1, config.NumberOfWorkers)
+	assert.Equal(t, 10, config.QueueDepth)
+	assert.Equal(t, "test-consumer", config.ConsumerID)
+	assert.Equal(t, time.Duration(10*time.Second), config.ProcessingTimeout)
+	assert.Equal(t, time.Duration(10*time.Second), config.RedeliverInterval)
 }

@@ -106,20 +106,21 @@ func RedisPubSubProviderConfigFromMap(properties map[string]string) (RedisPubSub
 	if v, ok := properties["processingTimeout"]; ok {
 		val := v //providers.LoadEnv(v)
 		if val != "" {
-			n, err := utils.UnmarshalDuration(val)
+			n, err := parseDuration(val)
 			if err != nil {
-				return ret, v1alpha2.NewCOAError(err, "invalid int value in the 'processingTimeout' setting of Redis pub-sub provider", v1alpha2.BadConfig)
+				return ret, v1alpha2.NewCOAError(err, "invalid value in the 'processingTimeout' setting of Redis pub-sub provider", v1alpha2.BadConfig)
+			} else {
+				ret.ProcessingTimeout = n
 			}
-			ret.ProcessingTimeout = n
 		}
 	}
 
 	if v, ok := properties["redeliverInterval"]; ok {
 		val := v //providers.LoadEnv(v)
 		if val != "" {
-			n, err := utils.UnmarshalDuration(val)
+			n, err := parseDuration(val)
 			if err != nil {
-				return ret, v1alpha2.NewCOAError(err, "invalid int value in the 'redeliverInterval' setting of Redis pub-sub provider", v1alpha2.BadConfig)
+				return ret, v1alpha2.NewCOAError(err, "invalid value in the 'redeliverInterval' setting of Redis pub-sub provider", v1alpha2.BadConfig)
 			}
 			ret.RedeliverInterval = n
 		}
@@ -143,7 +144,7 @@ func (s *RedisPubSubProvider) SetContext(ctx *contexts.ManagerContext) {
 func (i *RedisPubSubProvider) InitWithMap(properties map[string]string) error {
 	config, err := RedisPubSubProviderConfigFromMap(properties)
 	if err != nil {
-		mLog.Debugf("  P (Redis PubSub) : failed to initialize provider %v", err)
+		mLog.Errorf("  P (Redis PubSub) : failed to initialize provider %v", err)
 		return err
 	}
 	return i.Init(config)
@@ -152,7 +153,7 @@ func (i *RedisPubSubProvider) InitWithMap(properties map[string]string) error {
 func (i *RedisPubSubProvider) Init(config providers.IProviderConfig) error {
 	vConfig, err := toRedisPubSubProviderConfig(config)
 	if err != nil {
-		mLog.Debugf("  P (Redis PubSub): failed to parse provider config %+v", err)
+		mLog.Errorf("  P (Redis PubSub): failed to parse provider config %+v", err)
 		return v1alpha2.NewCOAError(nil, "provided config is not a valid redis pub-sub provider config", v1alpha2.BadConfig)
 	}
 	i.Config = vConfig
@@ -175,7 +176,7 @@ func (i *RedisPubSubProvider) Init(config providers.IProviderConfig) error {
 	}
 	client := redis.NewClient(options)
 	if _, err := client.Ping().Result(); err != nil {
-		mLog.Debugf("  P (Redis PubSub): failed to connect to redis %+v", err)
+		mLog.Errorf("  P (Redis PubSub): failed to connect to redis %+v", err)
 		return v1alpha2.NewCOAError(err, fmt.Sprintf("redis stream: error connecting to redis at %s", i.Config.Host), v1alpha2.InternalError)
 	}
 	i.Client = client
@@ -379,12 +380,35 @@ func toRedisPubSubProviderConfig(config providers.IProviderConfig) (RedisPubSubP
 	if err != nil {
 		return ret, err
 	}
-	err = json.Unmarshal(data, &ret)
-	//ret.Name = providers.LoadEnv(ret.Name)
-	//ret.Host = providers.LoadEnv(ret.Host)
-	//ret.Password = providers.LoadEnv(ret.Password)
-	if ret.NumberOfWorkers <= 0 {
-		ret.NumberOfWorkers = 1
+	var configs map[string]interface{}
+	err = json.Unmarshal(data, &configs)
+	if err != nil {
+		mLog.Errorf("  P (Redis PubSub): failed to parse to map[string]interface{} %+v", err)
+		return ret, err
+	}
+	configStrings := map[string]string{}
+	for k, v := range configs {
+		configStrings[k] = utils.FormatAsString(v)
+	}
+
+	ret, err = RedisPubSubProviderConfigFromMap(configStrings)
+	if err != nil {
+		mLog.Errorf("  P (Redis PubSub): failed to parse to RedisPubSubProviderConfig %+v", err)
+		return ret, err
 	}
 	return ret, err
+}
+
+func parseDuration(val string) (time.Duration, error) {
+	n, err := utils.UnmarshalDuration(val)
+	if err != nil {
+		n, err = time.ParseDuration(val)
+		if err != nil {
+			return time.Duration(1000), err
+		} else {
+			return n, nil
+		}
+	} else {
+		return n, nil
+	}
 }
