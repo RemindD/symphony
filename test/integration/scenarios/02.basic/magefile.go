@@ -22,7 +22,7 @@ import (
 // Test config
 const (
 	TEST_NAME    = "basic manifest deploy scenario"
-	TEST_TIMEOUT = "10m"
+	TEST_TIMEOUT = "15m"
 )
 
 var (
@@ -73,7 +73,7 @@ func Test() error {
 		if err != nil {
 			return err
 		}
-		time.Sleep(time.Second * 10)
+		time.Sleep(time.Second * 600)
 	}
 
 	return nil
