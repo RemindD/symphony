@@ -27,6 +27,9 @@ redis:
   asSidecar: false
   image: redis/redis-stack-server:latest
   port: 6379
+  persistentVolume:
+    enabled: false
+    pvc: 
 kubeRbacProxy:
   image: gcr.io/kubebuilder/kube-rbac-proxy:v0.8.0
 parent:
