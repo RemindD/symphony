@@ -146,7 +146,7 @@ func (i *MaterializeStageProvider) Process(ctx context.Context, mgrContext conte
 	creationCount := 0
 	for _, catalog := range catalogs {
 		for _, object := range prefixedNames {
-			object := api_utils.ReplaceSeperator(object)
+			object := api_utils.ConvertReferenceToObjectName(object)
 			if catalog.ObjectMeta.Name == object {
 				label_key := os.Getenv("LABEL_KEY")
 				label_value := os.Getenv("LABEL_VALUE")
@@ -211,7 +211,7 @@ func (i *MaterializeStageProvider) Process(ctx context.Context, mgrContext conte
 					}
 
 					solutionName := solutionState.ObjectMeta.Name
-					parts := strings.Split(solutionName, ":")
+					parts := strings.Split(solutionName, constants.ReferenceSeparator)
 					if len(parts) == 2 {
 						solutionState.Spec.RootResource = parts[0]
 						solutionState.Spec.Version = parts[1]
@@ -285,7 +285,7 @@ func (i *MaterializeStageProvider) Process(ctx context.Context, mgrContext conte
 					}
 
 					catalogName := catalogState.ObjectMeta.Name
-					parts := strings.Split(catalogName, ":")
+					parts := strings.Split(catalogName, constants.ReferenceSeparator)
 					if len(parts) == 2 {
 						catalogState.Spec.RootResource = parts[0]
 						catalogState.Spec.Version = parts[1]
@@ -334,8 +334,8 @@ func (i *MaterializeStageProvider) Process(ctx context.Context, mgrContext conte
 }
 
 func updateObjectMeta(objectMeta model.ObjectMeta, inputs map[string]interface{}) model.ObjectMeta {
-	if strings.Contains(objectMeta.Name, ":") {
-		objectMeta.Name = strings.ReplaceAll(objectMeta.Name, ":", constants.ResourceSeperator)
+	if strings.Contains(objectMeta.Name, constants.ReferenceSeparator) {
+		objectMeta.Name = strings.ReplaceAll(objectMeta.Name, constants.ReferenceSeparator, constants.ResourceSeperator)
 	}
 	// stage inputs override objectMeta namespace
 	if s := stage.GetNamespace(inputs); s != "" {

@@ -43,12 +43,6 @@ COPY k8s/ k8s/
 WORKDIR /k8s
 # Test
 # Mariner images doesn't support TSan which is the required for go test -race.
-RUN if echo "${BUILD_BASE_IMAGE}" | grep "mariner"; then \
-        export SKIP_RACE_CHECK=true; \
-        CGO_ENABLED=1 mage generate operatorTest; \
-    else \
-        CGO_ENABLED=1 mage generate operatorTest; \
-    fi
 
 # Build
 RUN CGO_ENABLED=0 mage build

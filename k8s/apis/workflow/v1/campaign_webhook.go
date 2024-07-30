@@ -8,11 +8,17 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"gopls-workspace/apis/metrics/v1"
 	commoncontainer "gopls-workspace/apis/model/v1"
 	"gopls-workspace/configutils"
+	"gopls-workspace/utils"
 	"time"
 
+	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/model"
+	apiUtils "github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/utils"
+	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -45,6 +51,9 @@ func (r *Campaign) SetupWebhookWithManager(mgr ctrl.Manager) error {
 		}
 		catalogWebhookValidationMetrics = metrics
 	}
+
+	model.SetCampaignContainerLookupFunc(LookupCampaignContainer)
+	model.SetCampaignActivationsLookupFunc(LookupRunningActivation)
 
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(r).
@@ -118,26 +127,45 @@ func (r *Campaign) ValidateCreate() (admission.Warnings, error) {
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
 func (r *Campaign) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	campaignlog.Info("validate update", "name", r.Name)
-
-	return nil, nil
+	validateUpdateTime := time.Now()
+	oldCampaign, ok := old.(*Campaign)
+	if !ok {
+		return nil, fmt.Errorf("expected an Campaign object")
+	}
+	validationError := r.validateUpdateCampaign(oldCampaign)
+	if validationError != nil {
+		activationWebhookValidationMetrics.ControllerValidationLatency(
+			validateUpdateTime,
+			metrics.UpdateOperationType,
+			metrics.InvalidResource,
+			metrics.InstanceResourceType,
+		)
+	} else {
+		activationWebhookValidationMetrics.ControllerValidationLatency(
+			validateUpdateTime,
+			metrics.UpdateOperationType,
+			metrics.ValidResource,
+			metrics.InstanceResourceType,
+		)
+	}
+	return nil, validationError
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
 func (r *Campaign) ValidateDelete() (admission.Warnings, error) {
 	campaignlog.Info("validate delete", "name", r.Name)
 
-	return nil, nil
+	validationError := r.validateDeleteCampaign()
+	return nil, validationError
 }
 
 func (r *Campaign) validateCreateCampaign() error {
-	var allErrs field.ErrorList
-
-	if err := r.validateNameOnCreate(); err != nil {
-		allErrs = append(allErrs, err)
+	state, err := r.ConvertCampaignState()
+	if err != nil {
+		return err
 	}
-	if err := r.validateRootResource(); err != nil {
-		allErrs = append(allErrs, err)
-	}
+	ErrorFields := state.ValidateCreate()
+	allErrs := utils.ConvertErrorFieldsToK8sError(ErrorFields)
 
 	if len(allErrs) == 0 {
 		return nil
@@ -146,22 +174,80 @@ func (r *Campaign) validateCreateCampaign() error {
 	return apierrors.NewInvalid(schema.GroupKind{Group: "workflow.symphony", Kind: "Campaign"}, r.Name, allErrs)
 }
 
-func (r *Campaign) validateNameOnCreate() *field.Error {
-	return configutils.ValidateObjectName(r.ObjectMeta.Name, r.Spec.RootResource)
+func (r *Campaign) validateDeleteCampaign() error {
+	state, err := r.ConvertCampaignState()
+	if err != nil {
+		return err
+	}
+	ErrorFields := state.ValidateDelete()
+	allErrs := utils.ConvertErrorFieldsToK8sError(ErrorFields)
+	if len(allErrs) == 0 {
+		return nil
+	}
+
+	return apierrors.NewInvalid(schema.GroupKind{Group: "workflow.symphony", Kind: "Campaign"}, r.Name, allErrs)
 }
 
-func (r *Campaign) validateRootResource() *field.Error {
-	var campaignContainer CampaignContainer
-	err := myCampaignReaderClient.Get(context.Background(), client.ObjectKey{Name: r.Spec.RootResource, Namespace: r.Namespace}, &campaignContainer)
+func (r *Campaign) validateUpdateCampaign(oldCampaign *Campaign) error {
+	state, err := r.ConvertCampaignState()
 	if err != nil {
-		return field.Invalid(field.NewPath("spec").Child("rootResource"), r.Spec.RootResource, "rootResource must be a valid campaign container")
+		return err
+	}
+	old, err := oldCampaign.ConvertCampaignState()
+	if err != nil {
+		return err
+	}
+	ErrorFields := state.ValidateUpdate(&old)
+	allErrs := utils.ConvertErrorFieldsToK8sError(ErrorFields)
+
+	if len(allErrs) == 0 {
+		return nil
 	}
 
-	if len(r.ObjectMeta.OwnerReferences) == 0 {
-		return field.Invalid(field.NewPath("metadata").Child("ownerReference"), len(r.ObjectMeta.OwnerReferences), "ownerReference must be set")
+	return apierrors.NewInvalid(schema.GroupKind{Group: "workflow.symphony", Kind: "Campaign"}, r.Name, allErrs)
+}
+
+func (r *Campaign) ConvertCampaignState() (model.CampaignState, error) {
+	retErr := apierrors.NewInvalid(schema.GroupKind{Group: "workflow.symphony", Kind: "Campaign"}, r.Name,
+		field.ErrorList{field.InternalError(nil, v1alpha2.NewCOAError(nil, "Unable to convert to campaign state", v1alpha2.BadRequest))})
+	bytes, err := json.Marshal(r)
+	if err != nil {
+		return model.CampaignState{}, retErr
+	}
+	var state model.CampaignState
+	err = json.Unmarshal(bytes, &state)
+	if err != nil {
+		return model.CampaignState{}, retErr
+	}
+	return state, nil
+}
+
+func LookupCampaignContainer(name string, namespace string) (bool, interface{}) {
+	var campaignContainer CampaignContainer
+	err := myCampaignReaderClient.Get(context.Background(), client.ObjectKey{Name: name, Namespace: namespace}, &campaignContainer)
+	if err != nil {
+		return false, nil
+	}
+	return true, &campaignContainer
+}
+
+func LookupRunningActivation(campaignName string, namespace string) (bool, string) {
+	var activationList ActivationList
+	err := myCampaignReaderClient.List(context.Background(), &activationList, client.InNamespace(namespace),
+		client.MatchingLabels{"campaign": apiUtils.ConvertObjectNameToReference(campaignName), ".statusMessage": v1alpha2.Running.String()}, client.Limit(1))
+	if err != nil {
+		campaignlog.Error(err, "could not list activations", "name", campaignName)
+		return false, ""
 	}
 
-	return nil
+	campaignlog.Info("activations", "name", campaignName, "count", len(activationList.Items))
+	// Check if there are any activations that is not finished for this campaign
+	if len(activationList.Items) > 0 {
+		campaignlog.Error(err, fmt.Sprintf("activations '%s' is not finished for campaign %s", activationList.Items[0].Name, campaignName), "name", campaignName)
+		return true, activationList.Items[0].Name
+	} else {
+		return false, ""
+	}
 }
 
 func (r *CampaignContainer) Default() {

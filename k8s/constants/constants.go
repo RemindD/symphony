@@ -20,6 +20,7 @@ const (
 	OperationStartTimeKeyPostfix = FullGroupName + "/started-at"
 	FinalizerPostfix             = FullGroupName + "/finalizer"
 	ResourceSeperator            = "-v-"
+	ReferenceSeparator           = ":"
 )
 
 // Environment variables keys
