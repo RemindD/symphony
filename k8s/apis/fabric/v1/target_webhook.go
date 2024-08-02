@@ -8,6 +8,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 	v1 "gopls-workspace/apis/model/v1"
 	configutils "gopls-workspace/configutils"
 
+	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/model"
+	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -55,6 +58,7 @@ func (r *Target) SetupWebhookWithManager(mgr ctrl.Manager) error {
 		targetWebhookValidationMetrics = metrics
 	}
 
+	model.UniqueNameTargetLookupFunc = findObjectWithUniqueName
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(r).
 		Complete()
@@ -149,6 +153,12 @@ func (r *Target) ValidateDelete() (admission.Warnings, error) {
 
 func (r *Target) validateCreateTarget() error {
 	var allErrs field.ErrorList
+	state, err := r.ConvertTargetState()
+	if err != nil {
+		return err
+	}
+	ErrorFields := state.ValidateCreate()
+	allErrs = model.ConvertErrorFieldsToK8sError(ErrorFields)
 
 	if err := r.validateUniqueNameOnCreate(); err != nil {
 		allErrs = append(allErrs, err)
@@ -296,4 +306,36 @@ func extractTargetValidationPack(list TargetList, p configv1.ValidationPolicy) [
 		}
 	}
 	return pack
+}
+
+func (r *Target) ConvertTargetState() (model.TargetState, error) {
+	retErr := apierrors.NewInvalid(schema.GroupKind{Group: "fabric.symphony", Kind: "Target"}, r.Name,
+		field.ErrorList{field.InternalError(nil, v1alpha2.NewCOAError(nil, "Unable to convert to target state", v1alpha2.BadRequest))})
+	bytes, err := json.Marshal(r)
+	if err != nil {
+		return model.TargetState{}, retErr
+	}
+	var state model.TargetState
+	err = json.Unmarshal(bytes, &state)
+	if err != nil {
+		return model.TargetState{}, retErr
+	}
+	return state, nil
+}
+
+func findObjectWithUniqueName(displayName string, namespace string) (bool, interface{}) {
+	var targets TargetList
+	var objectList client.ObjectList
+	objectList = &TargetList{}
+	err := myTargetClient.List(context.Background(), objectList, client.InNamespace(namespace), client.MatchingLabels{"displayName": displayName}, client.Limit(1))
+	if err != nil {
+		// return true if List call failed
+		return true, nil
+	}
+	targets = *objectList.(*TargetList)
+
+	if len(targets.Items) > 0 {
+		return true, &targets.Items[0]
+	}
+	return false, nil
 }

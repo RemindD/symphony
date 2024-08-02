@@ -18,9 +18,9 @@ func (c *InstanceState) ValidateCreate() []ErrorField {
 	if err := c.ValidateSolutionExist(); err != nil {
 		errorFields = append(errorFields, *err)
 	}
-	// if err := c.ValidateTargetExist(); err != nil {
-	// 	errorFields = append(errorFields, *err)
-	// }
+	if err := c.ValidateTargetExist(); err != nil {
+		errorFields = append(errorFields, *err)
+	}
 	if err := c.ValidateTargetValid(); err != nil {
 		errorFields = append(errorFields, *err)
 	}

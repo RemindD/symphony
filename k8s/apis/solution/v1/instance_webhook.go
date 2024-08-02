@@ -206,11 +206,14 @@ func (r *Instance) validateUpdateInstance(old *Instance) error {
 
 func findObjectWithUniqueName(displayName string, namespace string) (bool, interface{}) {
 	var instances InstanceList
-	err := myInstanceClient.List(context.Background(), &instances, client.InNamespace(namespace), client.MatchingLabels{"displayName": displayName}, client.Limit(1))
+	var objectList client.ObjectList
+	objectList = &InstanceList{}
+	err := myInstanceClient.List(context.Background(), objectList, client.InNamespace(namespace), client.MatchingLabels{"displayName": displayName}, client.Limit(1))
 	if err != nil {
 		// return true if List call failed
 		return true, nil
 	}
+	instances = *objectList.(*InstanceList)
 
 	if len(instances.Items) > 0 {
 		return true, &instances.Items[0]
