@@ -31,11 +31,11 @@ func (c *ActivationState) ValidateCreate() []ErrorField {
 func (c *ActivationState) ValidateUpdate(oldc *ActivationState) []ErrorField {
 	errorFields := []ErrorField{}
 	// validate spec is immutable
-	if equal, _ := c.Spec.DeepEquals(oldc.Spec); !equal {
+	if equal, err := c.Spec.DeepEquals(*oldc.Spec); !equal {
 		errorFields = append(errorFields, ErrorField{
 			FieldPath:       "spec",
 			Value:           c.Spec,
-			DetailedMessage: "spec is immutable",
+			DetailedMessage: "spec is immutable: " + err.Error(),
 		})
 	}
 

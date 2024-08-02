@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/eclipse-symphony/symphony/api/constants"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 type ErrorField struct {
@@ -91,4 +92,17 @@ func ConvertObjectNameToReference(name string) string {
 		name = strings.ReplaceAll(name, constants.ResourceSeperator, constants.ReferenceSeparator)
 	}
 	return name
+}
+
+func ConvertErrorFieldsToK8sError(ErrorFields []ErrorField) field.ErrorList {
+	var allErrs field.ErrorList
+	for _, errorField := range ErrorFields {
+		pathArray := strings.Split(errorField.FieldPath, ".")
+		errorPath := field.NewPath(pathArray[0])
+		for _, path := range pathArray[1:] {
+			errorPath = errorPath.Child(path)
+		}
+		allErrs = append(allErrs, field.Invalid(errorPath, errorField.Value, errorField.DetailedMessage))
+	}
+	return allErrs
 }

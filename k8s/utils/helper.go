@@ -13,12 +13,9 @@ import (
 	"io"
 	"regexp"
 	"sort"
-	"strings"
 
 	"gopls-workspace/constants"
 
-	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/model"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -56,17 +53,4 @@ func writeObjectHash(writer io.Writer, object client.Object) {
 		object.GetAnnotations()[constants.AzureOperationIdKey],
 		object.GetGeneration(),
 	)
-}
-
-func ConvertErrorFieldsToK8sError(ErrorFields []model.ErrorField) field.ErrorList {
-	var allErrs field.ErrorList
-	for _, errorField := range ErrorFields {
-		pathArray := strings.Split(errorField.FieldPath, ".")
-		errorPath := field.NewPath(pathArray[0])
-		for _, path := range pathArray[1:] {
-			errorPath = errorPath.Child(path)
-		}
-		allErrs = append(allErrs, field.Invalid(errorPath, errorField.Value, errorField.DetailedMessage))
-	}
-	return allErrs
 }

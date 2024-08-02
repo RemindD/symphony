@@ -228,6 +228,9 @@ func (t *ActivationsManager) ReportStatus(ctx context.Context, name string, name
 			"resource":  "activations",
 			"namespace": activationState.ObjectMeta.Namespace,
 			"kind":      "Activation",
+			"labels": map[string]string{
+				"statusMessage": current.Status.String(),
+			},
 		},
 		Options: states.UpsertOption{
 			UpdateStateOnly: true,

@@ -13,11 +13,10 @@ import (
 	"gopls-workspace/apis/metrics/v1"
 	commoncontainer "gopls-workspace/apis/model/v1"
 	"gopls-workspace/configutils"
-	"gopls-workspace/utils"
 	"time"
 
 	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/model"
-	apiUtils "github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/utils"
+
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -165,7 +164,7 @@ func (r *Campaign) validateCreateCampaign() error {
 		return err
 	}
 	ErrorFields := state.ValidateCreate()
-	allErrs := utils.ConvertErrorFieldsToK8sError(ErrorFields)
+	allErrs := model.ConvertErrorFieldsToK8sError(ErrorFields)
 
 	if len(allErrs) == 0 {
 		return nil
@@ -180,7 +179,7 @@ func (r *Campaign) validateDeleteCampaign() error {
 		return err
 	}
 	ErrorFields := state.ValidateDelete()
-	allErrs := utils.ConvertErrorFieldsToK8sError(ErrorFields)
+	allErrs := model.ConvertErrorFieldsToK8sError(ErrorFields)
 	if len(allErrs) == 0 {
 		return nil
 	}
@@ -198,7 +197,7 @@ func (r *Campaign) validateUpdateCampaign(oldCampaign *Campaign) error {
 		return err
 	}
 	ErrorFields := state.ValidateUpdate(&old)
-	allErrs := utils.ConvertErrorFieldsToK8sError(ErrorFields)
+	allErrs := model.ConvertErrorFieldsToK8sError(ErrorFields)
 
 	if len(allErrs) == 0 {
 		return nil
@@ -234,7 +233,7 @@ func LookupCampaignContainer(name string, namespace string) (bool, interface{}) 
 func LookupRunningActivation(campaignName string, namespace string) (bool, string) {
 	var activationList ActivationList
 	err := myCampaignReaderClient.List(context.Background(), &activationList, client.InNamespace(namespace),
-		client.MatchingLabels{"campaign": apiUtils.ConvertObjectNameToReference(campaignName), ".statusMessage": v1alpha2.Running.String()}, client.Limit(1))
+		client.MatchingLabels{"campaign": campaignName, "statusMessage": v1alpha2.Running.String()}, client.Limit(1))
 	if err != nil {
 		campaignlog.Error(err, "could not list activations", "name", campaignName)
 		return false, ""
@@ -249,6 +248,8 @@ func LookupRunningActivation(campaignName string, namespace string) (bool, strin
 		return false, ""
 	}
 }
+
+// CampaignContainer Webhook
 
 func (r *CampaignContainer) Default() {
 	commoncontainer.DefaultImpl(campaignlog, r)

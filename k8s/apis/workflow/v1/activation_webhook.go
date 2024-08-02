@@ -15,7 +15,6 @@ import (
 
 	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/model"
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2"
-	"github.com/eclipse-symphony/symphony/k8s/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -48,7 +47,7 @@ func (r *Activation) SetupWebhookWithManager(mgr ctrl.Manager) error {
 		activationWebhookValidationMetrics = metrics
 	}
 
-	model.SetCampaignLookupFunc(LookupCampaign)
+	model.SetCampaignLookupFunc(lookupCampaign)
 
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(r).
@@ -63,15 +62,19 @@ var _ webhook.Defaulter = &Activation{}
 
 // Default implements webhook.Defaulter so a webhook will be registered for the type
 func (r *Activation) Default() {
-	activationlog.Info("default", "name", r.Name)
-
-	r.Labels["campaign"] = r.Spec.Campaign
-	r.Labels["statusMessage"] = r.Status.StatusMessage
+	activationlog.Info("default", "name", r.Name, "spec", r.Spec, "status", r.Status)
+	if r.Labels == nil {
+		r.Labels = make(map[string]string)
+	}
+	if r.Spec.Campaign != "" {
+		activationlog.Info("default", "name", r.Name, "spec.campaign", r.Spec.Campaign)
+		r.Labels["campaign"] = model.ConvertReferenceToObjectName(r.Spec.Campaign)
+	}
 }
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
 
-//+kubebuilder:webhook:path=/validate-workflow-symphony-v1-activation,mutating=false,failurePolicy=fail,sideEffects=None,groups=workflow.symphony,resources=activations,verbs=create;update,versions=v1,name=mactivation.kb.io,admissionReviewVersions=v1
+//+kubebuilder:webhook:path=/validate-workflow-symphony-v1-activation,mutating=false,failurePolicy=fail,sideEffects=None,groups=workflow.symphony,resources=activation,verbs=create;update,versions=v1,name=mactivation.kb.io,admissionReviewVersions=v1
 
 var _ webhook.Validator = &Activation{}
 
@@ -139,7 +142,7 @@ func (r *Activation) validateCreateActivation() error {
 		return err
 	}
 	ErrorFields := state.ValidateCreate()
-	allErrs := utils.ConvertErrorFieldsToK8sError(ErrorFields)
+	allErrs := model.ConvertErrorFieldsToK8sError(ErrorFields)
 
 	if len(allErrs) == 0 {
 		return nil
@@ -158,7 +161,7 @@ func (r *Activation) validateUpdateActivation(oldActivation *Activation) error {
 		return err
 	}
 	ErrorFields := state.ValidateUpdate(&old)
-	allErrs := utils.ConvertErrorFieldsToK8sError(ErrorFields)
+	allErrs := model.ConvertErrorFieldsToK8sError(ErrorFields)
 
 	if len(allErrs) == 0 {
 		return nil
@@ -182,7 +185,7 @@ func (r *Activation) ConvertActivationState() (model.ActivationState, error) {
 	return state, nil
 }
 
-func LookupCampaign(name string, namespace string) (bool, interface{}) {
+func lookupCampaign(name string, namespace string) (bool, interface{}) {
 	var campaign Campaign
 	err := myActivationReaderClient.Get(context.Background(), client.ObjectKey{Name: name, Namespace: namespace}, &campaign)
 	if err != nil {

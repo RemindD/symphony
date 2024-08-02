@@ -26,8 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
@@ -88,6 +88,42 @@ func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Client.Get(ctx, req.NamespacedName, instance); err != nil {
 		log.Error(err, "unable to fetch Instance object")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if instance.ObjectMeta.DeletionTimestamp.IsZero() {
+		// Add finalizer to solution and target object
+		if instance.Spec.Solution != "" {
+			// var solution client.Object
+			solution := &solution_v1.Solution{}
+			if err := r.Client.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: model.ConvertReferenceToObjectName(instance.Spec.Solution)}, solution); err != nil {
+				log.Error(err, "unable to fetch solution object")
+				// Persist error in status if solution not found
+				return ctrl.Result{RequeueAfter: time.Duration(1 * time.Minute)}, err
+			}
+			finalizerName := "instance." + instance.ObjectMeta.Name
+			if !controllerutil.ContainsFinalizer(solution, finalizerName) {
+				controllerutil.AddFinalizer(solution, finalizerName)
+				// updates the object in Kubernetes cluster
+				if err := r.Client.Update(ctx, solution); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+		}
+		if instance.Spec.Target.Name != "" {
+			target := &fabric_v1.Target{}
+			if err := r.Client.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: instance.Spec.Target.Name}, target); err != nil {
+				log.Error(err, "unable to fetch target object")
+				// Persist error in status if target not found
+				return ctrl.Result{}, err
+			}
+			finalizerName := "instance." + instance.ObjectMeta.Name
+			if !controllerutil.ContainsFinalizer(target, finalizerName) {
+				controllerutil.AddFinalizer(target, finalizerName)
+				// updates the object in Kubernetes cluster
+				if err := r.Client.Update(ctx, target); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+		}
 	}
 
 	reconciliationType := metrics.CreateOperationType
@@ -202,7 +238,7 @@ func (r *InstanceReconciler) handleTarget(ctx context.Context, obj client.Object
 	options := []client.ListOption{client.InNamespace(tarObj.Namespace)}
 	err := r.List(context.Background(), &instances, options...)
 	if err != nil {
-		log.Log.Error(err, "Failed to list instances")
+		ctrllog.Log.Error(err, "Failed to list instances")
 		return ret
 	}
 
@@ -228,7 +264,7 @@ func (r *InstanceReconciler) handleTarget(ctx context.Context, obj client.Object
 	}
 
 	if len(ret) > 0 {
-		log.Log.Info(fmt.Sprintf("Watched target %s under namespace %s is updated, needs to requeue instances related, count: %d, list: %s", tarObj.Name, tarObj.Namespace, len(ret), strings.Join(updatedInstanceNames, ",")))
+		ctrllog.Log.Info(fmt.Sprintf("Watched target %s under namespace %s is updated, needs to requeue instances related, count: %d, list: %s", tarObj.Name, tarObj.Namespace, len(ret), strings.Join(updatedInstanceNames, ",")))
 	}
 
 	return ret
@@ -246,7 +282,7 @@ func (r *InstanceReconciler) handleSolution(ctx context.Context, obj client.Obje
 	}
 	error := r.List(context.Background(), &instances, options...)
 	if error != nil {
-		log.Log.Error(error, "Failed to list instances")
+		ctrllog.Log.Error(error, "Failed to list instances")
 		return ret
 	}
 
@@ -266,7 +302,7 @@ func (r *InstanceReconciler) handleSolution(ctx context.Context, obj client.Obje
 	}
 
 	if len(ret) > 0 {
-		log.Log.Info(fmt.Sprintf("Watched solution %s under namespace %s is updated, needs to requeue instances related, count: %d, list: %s", solObj.Name, solObj.Namespace, len(ret), strings.Join(updatedInstanceNames, ",")))
+		ctrllog.Log.Info(fmt.Sprintf("Watched solution %s under namespace %s is updated, needs to requeue instances related, count: %d, list: %s", solObj.Name, solObj.Namespace, len(ret), strings.Join(updatedInstanceNames, ",")))
 	}
 
 	return ret
