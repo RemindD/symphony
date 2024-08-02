@@ -9,9 +9,11 @@ package fabric
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	symphonyv1 "gopls-workspace/apis/fabric/v1"
+	solutionv1 "gopls-workspace/apis/solution/v1"
 	"gopls-workspace/constants"
 	"gopls-workspace/controllers/metrics"
 	"gopls-workspace/predicates"
@@ -25,7 +27,7 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	apimodel "github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/model"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 // TargetReconciler reconciles a Target object
@@ -104,6 +106,28 @@ func (r *TargetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if err != nil {
 			resultType = metrics.ReconcileFailedResult
 		}
+		if !target.ObjectMeta.DeletionTimestamp.IsZero() {
+			finalizers := target.GetFinalizers()
+			remaining := []string{}
+			if target.Finalizers == nil || len(target.Finalizers) == 0 {
+				return ctrl.Result{}, nil
+			} else {
+				for _, finalizer := range finalizers {
+					if strings.HasPrefix(finalizer, "instance.") {
+						instanceName := strings.TrimPrefix(finalizer, "instance.")
+						instance := &solutionv1.Instance{}
+						if err := r.Client.Get(ctx, client.ObjectKey{Namespace: target.Namespace, Name: instanceName}, instance); err == nil || !apierrors.IsNotFound(err) {
+							log.Error(err, "Instance "+instanceName+" still exists or unable to determine existance")
+							remaining = append(remaining, finalizer)
+						}
+					}
+				}
+			}
+			target.ObjectMeta.SetFinalizers(remaining)
+			if err := r.Client.Update(ctx, target); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 	}
 
 	r.m.ControllerReconcileLatency(
@@ -138,7 +162,7 @@ func (r *TargetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *TargetReconciler) populateProvisioningError(summaryResult *model.SummaryResult, err error, errorObj *apimodel.ErrorType) {
+func (r *TargetReconciler) populateProvisioningError(summaryResult *model.SummaryResult, err error, errorObj *model.ErrorType) {
 	errorObj.Code = "Symphony Orchestrator: [500]"
 	if summaryResult != nil {
 		summary := summaryResult.Summary
@@ -159,10 +183,10 @@ func (r *TargetReconciler) populateProvisioningError(summaryResult *model.Summar
 			errorObj.Code = v.Status
 			errorObj.Message = v.Message
 			errorObj.Target = k
-			errorObj.Details = make([]apimodel.TargetError, 0)
+			errorObj.Details = make([]model.TargetError, 0)
 			// fill errorObj.Details with component level status
 			for ck, cv := range v.ComponentResults {
-				errorObj.Details = append(errorObj.Details, apimodel.TargetError{
+				errorObj.Details = append(errorObj.Details, model.TargetError{
 					Code:    cv.Status.String(),
 					Message: cv.Message,
 					Target:  ck,
