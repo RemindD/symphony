@@ -141,8 +141,11 @@ func Scenario_Update(t *testing.T, namespace string) {
 	for _, test := range testCases {
 		fmt.Printf("[Test case]: %s\n", test.Name)
 
+		err := injectFault()
+		require.NoError(t, err)
+
 		// Construct the manifests
-		err := testhelpers.BuildManifestFile(
+		err = testhelpers.BuildManifestFile(
 			fmt.Sprintf("%s/%s", manifestTemplateFolder, "oss"),
 			fmt.Sprintf("%s/%s", testManifestsFolder, "oss"), test.Target, test.ComponentsToAdd)
 		require.NoError(t, err)
@@ -340,4 +343,18 @@ func getStatus(resource unstructured.Unstructured) string {
 	}
 
 	return ""
+}
+
+func injectFault() error {
+	Failpoint := os.Getenv("Failpoint")
+	FailAction := os.Getenv("FailAction")
+	if Failpoint == "" || FailAction == "" {
+		fmt.Println("Failpoint is ", Failpoint, " FailAction is ", FailAction, ", skip error injection")
+		return nil
+	}
+	err := shellcmd.Command(fmt.Sprintf("curl localhost:22381/%s -XPUT -d'%s'", Failpoint, FailAction)).Run()
+	if err != nil {
+		fmt.Println("Error injecting fault")
+	}
+	return err
 }
