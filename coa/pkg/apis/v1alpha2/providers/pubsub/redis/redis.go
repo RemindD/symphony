@@ -54,7 +54,6 @@ type RedisPubSubProviderConfig struct {
 	NumberOfWorkers int    `json:"numberOfWorkers,omitempty"`
 	QueueDepth      int    `json:"queueDepth,omitempty"`
 	ConsumerID      string `json:"consumerID"`
-	MultiInstance   bool   `json:"multiInstance,omitempty"`
 }
 
 const (
@@ -93,18 +92,6 @@ func RedisPubSubProviderConfigFromMap(properties map[string]string) (RedisPubSub
 			}
 			ret.RequiresTLS = bVal
 		}
-	}
-	if v, ok := properties["multiInstance"]; ok {
-		val := v //providers.LoadEnv(v)
-		if val != "" {
-			bVal, err := strconv.ParseBool(val)
-			if err != nil {
-				return ret, v1alpha2.NewCOAError(err, "invalid bool value in the 'requiresTLS' setting of Redis pub-sub provider", v1alpha2.BadConfig)
-			}
-			ret.MultiInstance = bVal
-		}
-	} else {
-		ret.MultiInstance = false
 	}
 	if v, ok := properties["numberOfWorkers"]; ok {
 		val := v //providers.LoadEnv(v)
@@ -256,9 +243,7 @@ func (i *RedisPubSubProvider) Subscribe(topic string, handler v1alpha2.EventHand
 	}
 	go i.pollNewMessagesLoop(topic, handler)
 	go i.ClaimMessageLoop(topic, i.Config.ConsumerID, handler, PendingMessagesScanInterval, ExtendMessageOwnershipWithIdleTime)
-	if i.Config.MultiInstance {
-		go i.ClaimMessageLoop(topic, "", handler, PendingMessagesScanIntervalOtherClient, ClaimMessageFromOtherClientWithIdleTime)
-	}
+	go i.ClaimMessageLoop(topic, "", handler, PendingMessagesScanIntervalOtherClient, ClaimMessageFromOtherClientWithIdleTime)
 	return nil
 }
 
