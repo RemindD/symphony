@@ -27,16 +27,17 @@ import (
 var mLog = logger.NewLogger("coa.runtime")
 
 type RedisPubSubProvider struct {
-	Config          RedisPubSubProviderConfig          `json:"config"`
-	Subscribers     map[string][]v1alpha2.EventHandler `json:"subscribers"`
-	Client          *redis.Client
-	Queue           chan RedisMessageWrapper
-	Ctx             context.Context
-	Cancel          context.CancelFunc
-	Context         *contexts.ManagerContext
-	ClaimedMessages map[string]bool
-	TopicLock       map[string]*sync.Mutex
-	MapLock         *sync.Mutex
+	Config             RedisPubSubProviderConfig          `json:"config"`
+	Subscribers        map[string][]v1alpha2.EventHandler `json:"subscribers"`
+	Client             *redis.Client
+	Queue              chan RedisMessageWrapper
+	Ctx                context.Context
+	Cancel             context.CancelFunc
+	Context            *contexts.ManagerContext
+	ClaimedMessageLock *sync.Mutex
+	ClaimedMessages    map[string]bool
+	TopicLock          map[string]*sync.Mutex
+	MapLock            *sync.Mutex
 }
 
 type RedisMessageWrapper struct {
@@ -164,6 +165,7 @@ func (i *RedisPubSubProvider) Init(config providers.IProviderConfig) error {
 	i.ClaimedMessages = make(map[string]bool)
 	i.MapLock = &sync.Mutex{}
 	i.TopicLock = make(map[string]*sync.Mutex)
+	i.ClaimedMessageLock = &sync.Mutex{}
 
 	i.Subscribers = make(map[string][]v1alpha2.EventHandler)
 	options := &redis.Options{
@@ -202,6 +204,7 @@ func (i *RedisPubSubProvider) worker() {
 	}
 }
 func (i *RedisPubSubProvider) processMessage(msg RedisMessageWrapper) error {
+	mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : processing message %s for topic", msg.MessageID, msg.Topic)
 	i.ClaimedMessages[msg.MessageID] = true
 	var evt v1alpha2.Event
 	err := json.Unmarshal([]byte(utils.FormatAsString(msg.Message)), &evt)
@@ -209,17 +212,21 @@ func (i *RedisPubSubProvider) processMessage(msg RedisMessageWrapper) error {
 		return v1alpha2.NewCOAError(err, "failed to unmarshal event", v1alpha2.InternalError)
 	}
 	shouldRetry := v1alpha2.EventShouldRetryWrapper(msg.Handler, msg.Topic, evt)
-	//err = msg.Handler(msg.Topic, evt)
 	lock := i.getTopicLock(msg.Topic)
 	lock.Lock()
 	defer lock.Unlock()
 	if shouldRetry {
+		i.ClaimedMessageLock.Lock()
+		defer i.ClaimedMessageLock.Unlock()
 		delete(i.ClaimedMessages, msg.MessageID)
+		mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : processing failed with retriable error for message %s for topic %s", msg.MessageID, msg.Topic)
 		return v1alpha2.NewCOAError(err, fmt.Sprintf("failed to handle message %s", msg.MessageID), v1alpha2.InternalError)
 	}
 	i.Client.XAck(i.Ctx, msg.Topic, RedisGroup, msg.MessageID)
+	i.ClaimedMessageLock.Lock()
+	defer i.ClaimedMessageLock.Unlock()
 	delete(i.ClaimedMessages, msg.MessageID)
-
+	mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : processing succeeded for message %s for topic %s", msg.MessageID, msg.Topic)
 	return nil
 }
 
@@ -272,11 +279,22 @@ func (i *RedisPubSubProvider) pollNewMessagesLoop(topic string, handler v1alpha2
 
 func (i *RedisPubSubProvider) enqueueMessages(topic string, handler v1alpha2.EventHandler, msgs []redis.XMessage) {
 	for _, msg := range msgs {
-		rmsg := createRedisMessageWrapper(topic, handler, msg)
-		select {
-		case i.Queue <- rmsg:
-		case <-i.Ctx.Done():
-			return
+		// Check if the message is already claimed and queued.
+		i.ClaimedMessageLock.Lock()
+		_, ok := i.ClaimedMessages[msg.ID]
+		i.ClaimedMessageLock.Unlock()
+		if !ok {
+			rmsg := createRedisMessageWrapper(topic, handler, msg)
+			select {
+			case i.Queue <- rmsg:
+				// Mark the message as claimed
+				mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : claimed and queued message %s for topic", msg.ID, topic)
+				i.ClaimedMessageLock.Lock()
+				i.ClaimedMessages[msg.ID] = true
+				i.ClaimedMessageLock.Unlock()
+			case <-i.Ctx.Done():
+				return
+			}
 		}
 	}
 }
@@ -350,13 +368,7 @@ func (i *RedisPubSubProvider) XClaimWrapper(topic string, minIdle time.Duration,
 		mLog.Error("  P (Redis PubSub) : failed to reclaim pending message %v", err)
 		return
 	}
-	filteredClaimResult := make([]redis.XMessage, 0, len(claimResult))
-	for _, msg := range claimResult {
-		if _, ok := i.ClaimedMessages[msg.ID]; !ok {
-			filteredClaimResult = append(filteredClaimResult, msg)
-		}
-	}
-	i.enqueueMessages(topic, handler, filteredClaimResult)
+	i.enqueueMessages(topic, handler, claimResult)
 }
 
 func toRedisPubSubProviderConfig(config providers.IProviderConfig) (RedisPubSubProviderConfig, error) {

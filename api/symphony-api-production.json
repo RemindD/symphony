@@ -27,7 +27,8 @@
           "host": "localhost:6379",
           "requireTLS": false,
           "password": "",
-          "numberOfWorkers": 1
+          "numberOfWorkers": 10,
+          "queueDepth": 100
         }
       }
     },
