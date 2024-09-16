@@ -27,17 +27,20 @@ import (
 var mLog = logger.NewLogger("coa.runtime")
 
 type RedisPubSubProvider struct {
-	Config             RedisPubSubProviderConfig          `json:"config"`
-	Subscribers        map[string][]v1alpha2.EventHandler `json:"subscribers"`
-	Client             *redis.Client
-	Queue              chan RedisMessageWrapper
-	Ctx                context.Context
-	Cancel             context.CancelFunc
-	Context            *contexts.ManagerContext
+	Config      RedisPubSubProviderConfig          `json:"config"`
+	Subscribers map[string][]v1alpha2.EventHandler `json:"subscribers"`
+	Client      *redis.Client
+	Queue       chan RedisMessageWrapper
+	Ctx         context.Context
+	Cancel      context.CancelFunc
+	Context     *contexts.ManagerContext
+	// ClaimedMessageLock is to guarantee thread safe access for ClaimedMessages map
 	ClaimedMessageLock *sync.Mutex
 	ClaimedMessages    map[string]bool
-	TopicLock          map[string]*sync.Mutex
-	MapLock            *sync.Mutex
+	// MapLock is to guarantee thread safe access for TopicLock map
+	// TopicLock is to make atomic operation of the combination of XClaim/XAck and change of ClaimedMessages
+	TopicLock map[string]*sync.Mutex
+	MapLock   *sync.Mutex
 }
 
 type RedisMessageWrapper struct {
@@ -205,7 +208,6 @@ func (i *RedisPubSubProvider) worker() {
 }
 func (i *RedisPubSubProvider) processMessage(msg RedisMessageWrapper) error {
 	mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : processing message %s for topic", msg.MessageID, msg.Topic)
-	i.ClaimedMessages[msg.MessageID] = true
 	var evt v1alpha2.Event
 	err := json.Unmarshal([]byte(utils.FormatAsString(msg.Message)), &evt)
 	if err != nil {
@@ -231,7 +233,7 @@ func (i *RedisPubSubProvider) processMessage(msg RedisMessageWrapper) error {
 }
 
 func (i *RedisPubSubProvider) Publish(topic string, event v1alpha2.Event) error {
-	_, err := i.Client.XAdd(i.Ctx, &redis.XAddArgs{
+	messageId, err := i.Client.XAdd(i.Ctx, &redis.XAddArgs{
 		Stream: topic,
 		Values: map[string]interface{}{"data": event},
 	}).Result()
@@ -239,6 +241,7 @@ func (i *RedisPubSubProvider) Publish(topic string, event v1alpha2.Event) error 
 		mLog.Errorf("  P (Redis PubSub) : failed to publish message %v", err)
 		return v1alpha2.NewCOAError(err, "failed to publish message", v1alpha2.InternalError)
 	}
+	mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : published message %s for topic %s", messageId, topic)
 	return nil
 }
 func (i *RedisPubSubProvider) Subscribe(topic string, handler v1alpha2.EventHandler) error {
@@ -288,7 +291,7 @@ func (i *RedisPubSubProvider) enqueueMessages(topic string, handler v1alpha2.Eve
 			select {
 			case i.Queue <- rmsg:
 				// Mark the message as claimed
-				mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : claimed and queued message %s for topic", msg.ID, topic)
+				mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : claimed and queued message %s for topic %s", msg.ID, topic)
 				i.ClaimedMessageLock.Lock()
 				i.ClaimedMessages[msg.ID] = true
 				i.ClaimedMessageLock.Unlock()
