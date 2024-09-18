@@ -207,7 +207,7 @@ func (i *RedisPubSubProvider) worker() {
 	}
 }
 func (i *RedisPubSubProvider) processMessage(msg RedisMessageWrapper) error {
-	mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : processing message %s for topic", msg.MessageID, msg.Topic)
+	mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : processing message %s for topic %s", msg.MessageID, msg.Topic)
 	var evt v1alpha2.Event
 	err := json.Unmarshal([]byte(utils.FormatAsString(msg.Message)), &evt)
 	if err != nil {
@@ -221,7 +221,7 @@ func (i *RedisPubSubProvider) processMessage(msg RedisMessageWrapper) error {
 		i.ClaimedMessageLock.Lock()
 		defer i.ClaimedMessageLock.Unlock()
 		delete(i.ClaimedMessages, msg.MessageID)
-		mLog.InfofCtx(i.Ctx, "  P (Redis PubSub) : processing failed with retriable error for message %s for topic %s", msg.MessageID, msg.Topic)
+		mLog.ErrorfCtx(i.Ctx, "  P (Redis PubSub) : processing failed with retriable error for message %s for topic %s", msg.MessageID, msg.Topic)
 		return v1alpha2.NewCOAError(err, fmt.Sprintf("failed to handle message %s", msg.MessageID), v1alpha2.InternalError)
 	}
 	i.Client.XAck(i.Ctx, msg.Topic, RedisGroup, msg.MessageID)
