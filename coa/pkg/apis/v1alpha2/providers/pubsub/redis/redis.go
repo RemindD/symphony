@@ -72,6 +72,8 @@ const (
 	// defines after how much idle time the provider should check for pending messages that previously claimed
 	// by other clients
 	ClaimMessageFromOtherClientWithIdleTime = 60 * time.Second
+
+	MessageBatchSize = 10
 )
 
 func RedisPubSubProviderConfigFromMap(properties map[string]string) (RedisPubSubProviderConfig, error) {
@@ -266,7 +268,7 @@ func (i *RedisPubSubProvider) pollNewMessagesLoop(topic string, handler v1alpha2
 			Group:    RedisGroup,
 			Consumer: i.Config.ConsumerID,
 			Streams:  []string{topic, ">"},
-			Count:    int64(i.Config.QueueDepth),
+			Count:    int64(MessageBatchSize),
 			Block:    0,
 		}).Result()
 		if err != nil {
@@ -337,7 +339,7 @@ func (i *RedisPubSubProvider) reclaimPendingMessages(topic string, idleTime time
 			Group:    RedisGroup,
 			Start:    start,
 			End:      "+",
-			Count:    int64(i.Config.QueueDepth),
+			Count:    int64(MessageBatchSize),
 			Idle:     idleTime,
 			Consumer: consumer,
 		}).Result()
