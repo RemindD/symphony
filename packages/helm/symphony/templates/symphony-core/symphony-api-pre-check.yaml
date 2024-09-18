@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ .Release.Name }}-pre-upgrade-check"
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation, hook-succeeded
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: {{ include "symphony.fullname" . }}-hook-sa
+      containers:
+        - name: pre-upgrade-check
+          image: {{ .Values.paiImage.repository }}:{{ .Values.paiImage.tag }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              version=$(helm history {{ .Release.Name }}  -n {{ .Release.Namespace }} -o json | jq -r '.[] | select(.status == "deployed") | .revision' | tail -n 1)
+              current_value=$(helm get values {{ .Release.Name }} -n {{ .Release.Namespace }} --revision $version -o json | jq -r '.redis.persistentVolume.enabled')
+              new_value={{ .Values.redis.persistentVolume.enabled }}
+              if [ "$current_value" != "$new_value" ]; then
+                echo "redis.persistentVolume.enabled parameter is immutable and has changed. Blocking upgrade."
+                exit 1
+              fi
+              echo "redis.persistentVolume.enabled parameter is unchanged. Proceeding with upgrade."
+      restartPolicy: Never

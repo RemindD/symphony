@@ -27,3 +27,6 @@ rules:
   resources: ["customresourcedefinitions"]
   verbs: ["*"]
   resourceNames: ["targets.symphony.microsoft.com", "instances.symphony.microsoft.com", "solutions.symphony.microsoft.com", "targets.fabric.symphony", "devices.fabric.symphony", "campaigns.workflow.symphony", "activations.workflow.symphony", "instances.solution.symphony", "solutions.solution.symphony", "models.ai.symphony", "skills.ai.symphony", "skillpackages.ai.symphony", "sites.federation.symphony", "catalogs.federation.symphony"]
+- apiGroups: ["*"] 
+  resources: ["secrets"]
+  verbs: ["get", "list"]
