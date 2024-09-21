@@ -469,6 +469,7 @@ func (s *JobsManager) HandleJobEvent(ctx context.Context, event v1alpha2.Event) 
 			//create deployment spec
 			var deployment model.DeploymentSpec
 			deployment, err = utils.CreateSymphonyDeployment(instance, solution, targetCandidates, nil, namespace)
+			log.InfofCtx(ctx, " M (Job): calculate deployment spec for instance: %v", deployment)
 			if err != nil {
 				log.ErrorfCtx(ctx, " M (Job): error creating deployment spec for instance %s: %s", instanceName, err.Error())
 				return err
@@ -525,6 +526,7 @@ func (s *JobsManager) HandleJobEvent(ctx context.Context, event v1alpha2.Event) 
 			}
 			var deployment model.DeploymentSpec
 			deployment, err = utils.CreateSymphonyDeploymentFromTarget(target, namespace)
+			log.InfofCtx(ctx, " M (Job): calculate deployment spec for target: %v", deployment)
 			if err != nil {
 				return err
 			}

@@ -80,6 +80,7 @@ func K8STargetToAPITargetState(target fabric_v1.Target) (apimodel.TargetState, e
 			Namespace:   target.ObjectMeta.Namespace,
 			Labels:      target.ObjectMeta.Labels,
 			Annotations: target.ObjectMeta.Annotations,
+			Generation:  strconv.FormatInt(target.ObjectMeta.Generation, 10),
 		},
 		Spec: &apimodel.TargetSpec{
 			DisplayName:   target.Spec.DisplayName,
@@ -111,6 +112,7 @@ func K8SInstanceToAPIInstanceState(instance solution_v1.Instance) (apimodel.Inst
 			Namespace:   instance.ObjectMeta.Namespace,
 			Labels:      instance.ObjectMeta.Labels,
 			Annotations: instance.ObjectMeta.Annotations,
+			Generation:  strconv.FormatInt(instance.ObjectMeta.Generation, 10),
 		},
 		Spec: &apimodel.InstanceSpec{
 			Scope:       instance.Spec.Scope,
@@ -201,12 +203,6 @@ func CreateSymphonyDeploymentFromTarget(target fabric_v1.Target, namespace strin
 
 	var ret apimodel.DeploymentSpec
 	ret, err = api_utils.CreateSymphonyDeploymentFromTarget(targetState, namespace)
-	ret.Hash = HashObjects(DeploymentResources{
-		TargetCandidates: []fabric_v1.Target{target},
-	})
-
-	ret.Generation = strconv.Itoa(int(target.ObjectMeta.Generation))
-	ret.IsDryRun = target.Spec.IsDryRun
 
 	return ret, err
 }
@@ -232,14 +228,6 @@ func CreateSymphonyDeployment(ctx context.Context, instance solution_v1.Instance
 
 	var ret apimodel.DeploymentSpec
 	ret, err = api_utils.CreateSymphonyDeployment(instanceState, solutionState, targetStates, nil, objectNamespace)
-	ret.Hash = HashObjects(DeploymentResources{
-		Instance:         instance,
-		Solution:         solution,
-		TargetCandidates: targets,
-	})
-
-	ret.Generation = strconv.Itoa(int(instance.ObjectMeta.Generation))
-	ret.IsDryRun = instance.Spec.IsDryRun
 
 	return ret, err
 }

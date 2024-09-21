@@ -203,7 +203,7 @@ func (r *DeploymentReconciler) AttemptUpdate(ctx context.Context, object Reconci
 		} else {
 			// It's not found in api so we should mark as reconciling, queue a job and check back in POLL seconds
 			diagnostic.InfoWithCtx(log, ctx, "Deployment summary not found, queueing job")
-			if err := r.queueDeploymentJob(ctx, object, false, false, operationStartTimeKey); err != nil {
+			if err := r.queueJob(ctx, object, false, false, operationStartTimeKey); err != nil {
 				diagnostic.ErrorWithCtx(log, ctx, err, "failed to queue deployment job")
 				return r.handleDeploymentError(ctx, object, summary, reconciliationInterval, err, log)
 			}
@@ -244,7 +244,7 @@ func (r *DeploymentReconciler) AttemptUpdate(ctx context.Context, object Reconci
 		diagnostic.InfoWithCtx(log, ctx, "Deployment is done, checking for parity")
 		if !r.hasParity(ctx, object, summary, log) {
 			diagnostic.InfoWithCtx(log, ctx, "Queueing deployment job because of parity mismatch")
-			if err = r.queueDeploymentJob(ctx, object, false, true, operationStartTimeKey); err != nil {
+			if err = r.queueJob(ctx, object, false, true, operationStartTimeKey); err != nil {
 				diagnostic.ErrorWithCtx(log, ctx, err, "failed to queue deployment job")
 				return r.handleDeploymentError(ctx, object, summary, reconciliationInterval, err, log)
 			}
@@ -277,7 +277,7 @@ func (r *DeploymentReconciler) AttemptUpdate(ctx context.Context, object Reconci
 		// else we should queue a reconciliation and check back in the difference between the summary time and the current time
 		if time.Since(summary.Time) > reconciliationInterval {
 			diagnostic.InfoWithCtx(log, ctx, "Queueing deployment job because of currentTime - summaryTime > reconciliationInterval")
-			if err = r.queueDeploymentJob(ctx, object, false, true, operationStartTimeKey); err != nil {
+			if err = r.queueJob(ctx, object, false, true, operationStartTimeKey); err != nil {
 				diagnostic.ErrorWithCtx(log, ctx, err, "failed to queue deployment job")
 				return r.handleDeploymentError(ctx, object, summary, reconciliationInterval, err, log)
 			}
@@ -340,7 +340,7 @@ func (r *DeploymentReconciler) AttemptRemove(ctx context.Context, object Reconci
 	// Since the summary is not found, we should queue a job and check back in POLL seconds
 	if err != nil {
 		diagnostic.InfoWithCtx(log, ctx, "Deployment summary not found, queueing job")
-		if err = r.queueDeploymentJob(ctx, object, true, false, operationStartTimeKey); err != nil {
+		if err = r.queueJob(ctx, object, true, false, operationStartTimeKey); err != nil {
 			diagnostic.ErrorWithCtx(log, ctx, err, "failed to queue deployment job")
 			return r.handleDeleteDeploymentError(ctx, object, summary, err, log)
 		}
@@ -378,7 +378,7 @@ func (r *DeploymentReconciler) AttemptRemove(ctx context.Context, object Reconci
 		// but it's better than not queueing a job at all.
 		if !r.hasParity(ctx, object, summary, log) {
 			diagnostic.InfoWithCtx(log, ctx, "Queueing deployment job because of parity mismatch")
-			if err = r.queueDeploymentJob(ctx, object, true, true, operationStartTimeKey); err != nil {
+			if err = r.queueJob(ctx, object, true, true, operationStartTimeKey); err != nil {
 				diagnostic.ErrorWithCtx(log, ctx, err, "failed to queue deployment job")
 				return r.handleDeleteDeploymentError(ctx, object, summary, err, log)
 			}
@@ -520,6 +520,7 @@ func (r *DeploymentReconciler) deploymentHashMatch(ctx context.Context, object R
 	return summary.DeploymentHash == deployment.Hash
 }
 
+/*
 func (r *DeploymentReconciler) queueDeploymentJob(ctx context.Context, object Reconcilable, isRemoval bool, updateCorrelationId bool, operationStartTimeKey string) error {
 	// If previous status was terminal and there is no parity between the summary and current object, then update correlation id.
 	// This will ensure that there is a new correlation id between deployments including deployments that periodically occur.
@@ -540,7 +541,20 @@ func (r *DeploymentReconciler) queueDeploymentJob(ctx context.Context, object Re
 	}
 	return nil
 }
+*/
 
+func (r *DeploymentReconciler) queueJob(ctx context.Context, object Reconcilable, isRemoval bool, updateCorrelationId bool, operationStartTimeKey string) error {
+	// If previous status was terminal and there is no parity between the summary and current object, then update correlation id.
+	// This will ensure that there is a new correlation id between deployments including deployments that periodically occur.
+	if updateCorrelationId && utilsmodel.IsTerminalState(object.GetStatus().ProvisioningStatus.Status) {
+		r.updateCorrelationIdMetaData(ctx, object, operationStartTimeKey)
+	}
+	isTarget := false
+	if object.GetObjectKind().GroupVersionKind().Kind == "Target" {
+		isTarget = true
+	}
+	return r.apiClient.QueueJob(ctx, object.GetName(), object.GetNamespace(), isRemoval, isTarget, "", "")
+}
 func (r *DeploymentReconciler) getDeploymentSummary(ctx context.Context, object Reconcilable) (*model.SummaryResult, error) {
 	return r.apiClient.GetSummary(ctx, r.deploymentKeyResolver(object), object.GetNamespace(), "", "")
 }

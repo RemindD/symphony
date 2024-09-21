@@ -9,12 +9,16 @@ package utils
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -42,6 +46,42 @@ type authResponse struct {
 	TokenType   string   `json:"tokenType"`
 	Username    string   `json:"username"`
 	Roles       []string `json:"roles"`
+}
+
+type DeploymentResources struct {
+	Instance         model.InstanceState
+	Solution         model.SolutionState
+	TargetCandidates []model.TargetState
+}
+
+func HashObjects(deploymentResources DeploymentResources) string {
+	hasher := md5.New()
+
+	// Sort the targets by name
+	sort.Slice(deploymentResources.TargetCandidates, func(i, j int) bool {
+		return deploymentResources.TargetCandidates[i].ObjectMeta.Name < deploymentResources.TargetCandidates[j].ObjectMeta.Name
+	})
+
+	// Add the solution and instance to the hasher
+	writeObjectHash(hasher, deploymentResources.Solution.ObjectMeta, "Solution")
+	writeObjectHash(hasher, deploymentResources.Instance.ObjectMeta, "Instance")
+
+	// Add the sorted targets to the hasher
+	for _, target := range deploymentResources.TargetCandidates {
+		writeObjectHash(hasher, target.ObjectMeta, "Target")
+	}
+
+	// Get the final hash result
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func writeObjectHash(writer io.Writer, object model.ObjectMeta, kind string) {
+	fmt.Fprintf(writer, "<%s:%s:%s:%s>",
+		object.Name,
+		kind,
+		object.Annotations[constants.AzureOperationIdKey],
+		object.Generation,
+	)
 }
 
 // We shouldn't use specific error types
@@ -739,6 +779,10 @@ func CreateSymphonyDeploymentFromTarget(target model.TargetState, namespace stri
 	}
 	ret.IsDryRun = target.Spec.IsDryRun
 
+	ret.Hash = HashObjects(DeploymentResources{
+		TargetCandidates: []model.TargetState{target},
+	})
+
 	return ret, nil
 }
 
@@ -775,6 +819,11 @@ func CreateSymphonyDeployment(instance model.InstanceState, solution model.Solut
 		ret.Assignments[k] = v
 	}
 	ret.IsDryRun = instance.Spec.IsDryRun
+	ret.Hash = HashObjects(DeploymentResources{
+		Instance:         instance,
+		Solution:         solution,
+		TargetCandidates: targets,
+	})
 
 	return ret, nil
 }

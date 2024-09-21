@@ -18,8 +18,9 @@ var (
 )
 
 const (
-	DefaultScope = "default"
-	SATokenPath  = "/var/run/secrets/tokens/symphony-api-token"
+	DefaultScope        = "default"
+	SATokenPath         = "/var/run/secrets/tokens/symphony-api-token"
+	AzureOperationIdKey = "management.azure.com/operationId"
 	// These constants need to be in a shared package.
 	GroupPrefix        = "symphony"
 	ManagerMetaKey     = GroupPrefix + "/managed-by"
