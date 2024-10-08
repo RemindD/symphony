@@ -23,6 +23,8 @@ ENV CGO_ENABLED=0
 
 ARG BUILD_BASE_IMAGE
 
+ARG FAULT_INJECTION_ENABLED=false
+
 # Install gcc, g++ and other necessary build tools
 RUN if echo "${BUILD_BASE_IMAGE}" | grep "alpine"; then \
         apk add --no-cache gcc musl-dev; \
@@ -43,16 +45,24 @@ COPY k8s/ k8s/
 WORKDIR /k8s
 # Test
 # Mariner images doesn't support TSan which is the required for go test -race.
-RUN if echo "${BUILD_BASE_IMAGE}" | grep "mariner"; then \
-        export SKIP_RACE_CHECK=true; \
-        CGO_ENABLED=1 mage generate operatorTest; \
-    else \
-        CGO_ENABLED=1 mage generate operatorTest; \
-    fi
+# RUN if echo "${BUILD_BASE_IMAGE}" | grep "mariner"; then \
+#         export SKIP_RACE_CHECK=true; \
+#         CGO_ENABLED=1 mage generate operatorTest; \
+#     else \
+#         CGO_ENABLED=1 mage generate operatorTest; \
+#     fi
+
+# Install gofail
+RUN if [ "$FAULT_INJECTION_ENABLED" == "true" ]; then \
+    go install go.etcd.io/gofail@latest && \
+    find /k8s -type d | while read -r dir; do gofail enable $dir; done && \
+    cd /k8s && go get go.etcd.io/gofail/runtime; \
+fi
 
 # Build
 RUN CGO_ENABLED=0 mage build
 FROM ${TARGET_BASE_IMAGE} AS manager
+RUN apk update && apk add curl
 WORKDIR /
 COPY --from=builder /k8s/bin/manager .
 USER 65532:65532

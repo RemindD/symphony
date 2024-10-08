@@ -58,6 +58,9 @@ func (r *InstancePollingReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	deploymentOperationType := metrics.DeploymentQueued
 	var err error
 
+	log.Info("test11")
+	// gofail: var beforePollingResult string
+
 	if instance.ObjectMeta.DeletionTimestamp.IsZero() { // update
 		reconciliationType = metrics.UpdateOperationType
 		operationName := fmt.Sprintf("%s/%s", constants.InstanceOperationNamePrefix, constants.ActivityOperation_Write)
@@ -73,6 +76,8 @@ func (r *InstancePollingReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			resultType = metrics.ReconcileFailedResult
 		}
 	}
+
+	// gofail: var afterPollingResult string
 
 	r.m.ControllerReconcileLatency(
 		reconcileTime,

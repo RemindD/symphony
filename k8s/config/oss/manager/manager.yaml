@@ -40,6 +40,9 @@ spec:
         name: manager
         securityContext:
           allowPrivilegeEscalation: false
+        env:
+        - name: GOFAIL_HTTP
+          value: "127.0.0.1:22381"
         livenessProbe:
           httpGet:
             path: /healthz

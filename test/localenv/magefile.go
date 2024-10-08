@@ -459,7 +459,7 @@ func (Build) K8sFault() error {
 func buildK8sFault() error {
 	// Pass fault arguments if required
 	imageName := "ghcr.io/eclipse-symphony/symphony-k8s"
-	return shellcmd.Command(fmt.Sprintf("docker buildx build --platform %s -f ../../k8s/Dockerfile -t %s \"../..\" --load", platform, imageName)).Run() //oss
+	return shellcmd.Command(fmt.Sprintf("docker buildx build --platform %s -f ../../k8s/Dockerfile -t %s  --build-arg FAULT_INJECTION_ENABLED=true \"../..\" --load", platform, imageName)).Run() //oss
 }
 
 /******************** Minikube ********************/

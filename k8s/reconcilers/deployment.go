@@ -186,10 +186,13 @@ func (r *DeploymentReconciler) AttemptUpdate(ctx context.Context, object Reconci
 		}
 	}
 
+	// gofail: var beforeQueueJob string
+
 	if err := r.queueDeploymentJob(ctx, object, isRemoval, true, operationStartTimeKey); err != nil {
 		diagnostic.ErrorWithCtx(log, ctx, err, "failed to queue deployment job")
 		return r.handleDeploymentError(ctx, object, nil, isRemoval, reconciliationInterval, err, log)
 	}
+	// gofail: var afterQueueJob string
 
 	diagnostic.InfoWithCtx(log, ctx, "Updating object status with deployment queued")
 	if _, err := r.updateObjectStatus(ctx, object, nil, patchStatusOptions{deploymentQueued: true}, log); err != nil {

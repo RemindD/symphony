@@ -2608,6 +2608,8 @@ spec:
               fieldPath: spec.serviceAccountName
         - name: USE_SERVICE_ACCOUNT_TOKENS
           value: "true"
+        - name: GOFAIL_HTTP
+          value: 127.0.0.1:22381
         envFrom:
         - configMapRef:
             name: '{{ include "symphony.envConfigName" . }}'

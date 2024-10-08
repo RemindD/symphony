@@ -28,7 +28,7 @@ RUN chmod +x pkg/apis/v1alpha1/providers/target/script/mock-*.sh
 # Install gofail
 RUN if [ "$FAULT_INJECTION_ENABLED" == "true" ]; then \
     go install go.etcd.io/gofail@latest && \
-    find . -type d | while read -r dir; do gofail enable $dir; done && \
+    find /workspace/api -type d | while read -r dir; do gofail enable $dir; done && \
     cd /workspace/api && go get go.etcd.io/gofail/runtime; \
 fi
 RUN CGO_ENABLED=${CGO_ENABLED} GOOS=${TARGETOS} GOARCH=${TARGETARCH} GODEBUG=netdns=cgo go build -o /dist/symphony-api

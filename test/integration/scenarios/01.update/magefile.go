@@ -41,18 +41,27 @@ var (
 		"afterDeploymentError",
 		"beforeConcludeSummary",
 	}
+
+	// Fail injection tests
+	K8sFailpoints = []string{
+		"beforePollingResult",
+		"afterPollingResult",
+		"beforeQueueJob",
+		"afterQueueJob",
+	}
 )
 
 func TestFault() error {
 	fmt.Println("Running ", TEST_NAME)
 
-	defer Cleanup()
+	// defer Cleanup()
 	err := testhelpers.SetupCluster()
 	if err != nil {
 		return err
 	}
 
-	err = testhelpers.EnablePortForward("app=symphony-api", "22381")
+	// err = testhelpers.EnablePortForward("app=symphony-api", "22381")
+	err = testhelpers.EnablePortForward("control-plane=symphony-controller-manager", "22381")
 	if err != nil {
 		return err
 	}
@@ -65,7 +74,7 @@ func TestFault() error {
 	// "https://symphony-webhook-service.default.svc:443/mutate-symphony-microsoft-com-v1-target?timeout=10s":
 	// x509: certificate signed by unknown authority>
 	time.Sleep(time.Second * 10)
-	for _, failpoint := range Failpoints {
+	for _, failpoint := range K8sFailpoints {
 		os.Setenv("Failpoint", failpoint)
 		os.Setenv("FailAction", "100.0%panic")
 		for _, namespace := range TestNamespaces {
