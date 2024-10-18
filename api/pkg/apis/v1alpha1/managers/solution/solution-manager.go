@@ -617,14 +617,14 @@ func (s *SolutionManager) saveSummary(ctx context.Context, objectName string, ge
 		return err
 	} else if err == nil {
 		var newId, oldId int64
-		newId, err = strconv.ParseInt(summary.JobID, 64, 10)
+		newId, err = strconv.ParseInt(summary.JobID, 10, 64)
 		if err != nil {
 			log.ErrorfCtx(ctx, " M (Solution): failed to parse new job id: %+v", err)
 			return v1alpha2.NewCOAError(err, "failed to parse new job id", v1alpha2.BadRequest)
 		}
-		oldId, err = strconv.ParseInt(oldSummary.Summary.JobID, 64, 10)
+		oldId, err = strconv.ParseInt(oldSummary.Summary.JobID, 10, 64)
 		if err == nil && oldId > newId {
-			errMsg := fmt.Sprintf("old job id %s is greater than new job id %s", oldId, newId)
+			errMsg := fmt.Sprintf("old job id %d is greater than new job id %d", oldId, newId)
 			log.ErrorfCtx(ctx, " M (Solution): %s", errMsg)
 			return v1alpha2.NewCOAError(err, errMsg, v1alpha2.BadRequest)
 		}
