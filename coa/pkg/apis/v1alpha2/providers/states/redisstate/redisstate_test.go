@@ -58,10 +58,10 @@ func TestInit(t *testing.T) {
 }
 
 func initializeProvider(t *testing.T) RedisStateProvider {
-	testRedis := os.Getenv("TEST_REDIS")
-	if testRedis == "" {
-		t.Skip("Skipping because TEST_REDIS enviornment variable is not set")
-	}
+	// testRedis := os.Getenv("TEST_REDIS")
+	// if testRedis == "" {
+	// 	t.Skip("Skipping because TEST_REDIS enviornment variable is not set")
+	// }
 	provider := RedisStateProvider{}
 	err := provider.Init(RedisStateProviderConfig{
 		Name:     "test",
@@ -872,6 +872,123 @@ func TestMultipleLabelsFilter(t *testing.T) {
 	assert.Equal(t, 1, len(entity))
 	err = provider.Delete(context.Background(), states.DeleteRequest{
 		ID: "123",
+		Metadata: map[string]interface{}{
+			"resource": "testresource",
+			"group":    "testgroup",
+		},
+	})
+	assert.Nil(t, err)
+}
+
+func TestUpsertEtagFirstWrite(t *testing.T) {
+	provider := initializeProvider(t)
+	entryId := "testid"
+	_, err := provider.Upsert(context.Background(), states.UpsertRequest{
+		Value: states.StateEntry{
+			ID: entryId,
+			Body: map[string]interface{}{
+				"spec": map[string]interface{}{},
+			},
+		},
+		Metadata: map[string]interface{}{
+			"resource": "testresource",
+			"group":    "testgroup",
+		},
+		Options: states.UpsertOption{
+			Concurrency: states.FirstWrite,
+		},
+	})
+	assert.Nil(t, err)
+
+	var entry states.StateEntry
+	entry, err = provider.Get(context.Background(), states.GetRequest{
+		ID: entryId,
+		Metadata: map[string]interface{}{
+			"resource": "testresource",
+			"group":    "testgroup",
+		},
+	})
+	assert.Nil(t, err)
+	assert.NotNil(t, entry)
+	assert.Equal(t, entry.ETag, "1")
+
+	_, err = provider.Upsert(context.Background(), states.UpsertRequest{
+		Value: states.StateEntry{
+			ID: entryId,
+			Body: map[string]interface{}{
+				"spec": map[string]interface{}{},
+			},
+		},
+		Metadata: map[string]interface{}{
+			"resource": "testresource",
+			"group":    "testgroup",
+		},
+		Options: states.UpsertOption{
+			Concurrency: states.FirstWrite,
+		},
+	})
+	assert.NotNil(t, err)
+
+	etag := "1"
+	_, err = provider.Upsert(context.Background(), states.UpsertRequest{
+		Value: states.StateEntry{
+			ID: entryId,
+			Body: map[string]interface{}{
+				"spec": map[string]interface{}{},
+			},
+		},
+		Metadata: map[string]interface{}{
+			"resource": "testresource",
+			"group":    "testgroup",
+		},
+		Options: states.UpsertOption{
+			Concurrency: states.FirstWrite,
+		},
+		ETag: &etag,
+	})
+	assert.Nil(t, err)
+	entry, err = provider.Get(context.Background(), states.GetRequest{
+		ID: entryId,
+		Metadata: map[string]interface{}{
+			"resource": "testresource",
+			"group":    "testgroup",
+		},
+	})
+	assert.Nil(t, err)
+	assert.NotNil(t, entry)
+	assert.Equal(t, entry.ETag, "2")
+
+	etag = "2"
+	_, err = provider.Upsert(context.Background(), states.UpsertRequest{
+		Value: states.StateEntry{
+			ID: entryId,
+			Body: map[string]interface{}{
+				"spec": map[string]interface{}{},
+			},
+		},
+		Metadata: map[string]interface{}{
+			"resource": "testresource",
+			"group":    "testgroup",
+		},
+		Options: states.UpsertOption{
+			Concurrency: states.FirstWrite,
+		},
+		ETag: &etag,
+	})
+	assert.Nil(t, err)
+	entry, err = provider.Get(context.Background(), states.GetRequest{
+		ID: entryId,
+		Metadata: map[string]interface{}{
+			"resource": "testresource",
+			"group":    "testgroup",
+		},
+	})
+	assert.Nil(t, err)
+	assert.NotNil(t, entry)
+	assert.Equal(t, entry.ETag, "3")
+
+	err = provider.Delete(context.Background(), states.DeleteRequest{
+		ID: entryId,
 		Metadata: map[string]interface{}{
 			"resource": "testresource",
 			"group":    "testgroup",

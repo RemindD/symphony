@@ -30,6 +30,29 @@ var rLog = logger.NewLogger("coa.runtime")
 const (
 	entryCountPerList = 100
 	separator         = "*"
+
+	setDefaultQuery = `
+	local etag = redis.pcall("HGET", KEYS[1], "version");
+	if type(etag) == "table" then
+	  redis.call("DEL", KEYS[1]);
+	end;
+	local fwr = redis.pcall("HGET", KEYS[1], "first-write");
+	if not etag or type(etag)=="table" or etag == "" or etag == ARGV[1] or (not fwr and ARGV[1] == "0") then
+	  redis.call("HSET", KEYS[1], "values", ARGV[2]);
+	  if ARGV[3] == "0" then
+	    redis.call("HSET", KEYS[1], "first-write", 0);
+	  end;
+	  return redis.call("HINCRBY", KEYS[1], "version", 1)
+	else
+	  return error("failed to set key " .. KEYS[1])
+	end`
+	delDefaultQuery = `
+	local etag = redis.pcall("HGET", KEYS[1], "version");
+	if not etag or type(etag)=="table" or etag == ARGV[1] or etag == "" or ARGV[1] == "0" then
+	  return redis.call("DEL", KEYS[1])
+	else
+	  return error("failed to delete " .. KEYS[1])
+	end`
 )
 
 type RedisStateProviderConfig struct {
@@ -147,37 +170,51 @@ func (r *RedisStateProvider) Upsert(ctx context.Context, entry states.UpsertRequ
 	if err != nil {
 		return entry.Value.ID, err
 	}
-	if entry.Options.UpdateStatusOnly {
-		var existing string
-		existing, err = r.Client.HGet(r.Ctx, key, "values").Result()
-		if err != nil {
-			return entry.Value.ID, v1alpha2.NewCOAError(nil, fmt.Sprintf("redis state %s not found. Cannot update state only", entry.Value.ID), v1alpha2.BadRequest)
-		}
-		var oldEntryDict map[string]interface{}
-		var oldStatusDict map[string]interface{}
-		oldEntryDict, oldStatusDict, err = getStatusDictFromMarshalStateEntryBody([]byte(existing))
-		if err != nil {
-			return entry.Value.ID, v1alpha2.NewCOAError(nil, fmt.Sprintf("old redis state %s status cannot be parsed", entry.Value.ID), v1alpha2.InternalError)
-		}
-		var newStatusDict map[string]interface{}
-		_, newStatusDict, err = getStatusDictFromMarshalStateEntryBody(body)
-		if err != nil {
-			return entry.Value.ID, v1alpha2.NewCOAError(nil, fmt.Sprintf("new redis state %s cannot be parsed", entry.Value.ID), v1alpha2.InternalError)
-		}
-		for k, v := range newStatusDict {
-			oldStatusDict[k] = v
-		}
-		oldEntryDict["status"] = oldStatusDict
-		body, _ = json.Marshal(oldEntryDict)
-		_, err = r.Client.HSet(r.Ctx, key, "values", string(body)).Result()
-		return entry.Value.ID, err
+	firstWrite := 1
+	if entry.Options.Concurrency == states.FirstWrite {
+		firstWrite = 0
 	}
 
-	properties := map[string]interface{}{
-		"values": string(body),
-		"etag":   entry.Value.ETag,
+	// if entry.Options.UpdateStatusOnly {
+	// 	var existing string
+	// 	existing, err = r.Client.HGet(r.Ctx, key, "values").Result()
+	// 	if err != nil {
+	// 		return entry.Value.ID, v1alpha2.NewCOAError(nil, fmt.Sprintf("redis state %s not found. Cannot update state only", entry.Value.ID), v1alpha2.BadRequest)
+	// 	}
+	// 	var oldEntryDict map[string]interface{}
+	// 	var oldStatusDict map[string]interface{}
+	// 	oldEntryDict, oldStatusDict, err = getStatusDictFromMarshalStateEntryBody([]byte(existing))
+	// 	if err != nil {
+	// 		return entry.Value.ID, v1alpha2.NewCOAError(nil, fmt.Sprintf("old redis state %s status cannot be parsed", entry.Value.ID), v1alpha2.InternalError)
+	// 	}
+	// 	var newStatusDict map[string]interface{}
+	// 	_, newStatusDict, err = getStatusDictFromMarshalStateEntryBody(body)
+	// 	if err != nil {
+	// 		return entry.Value.ID, v1alpha2.NewCOAError(nil, fmt.Sprintf("new redis state %s cannot be parsed", entry.Value.ID), v1alpha2.InternalError)
+	// 	}
+	// 	for k, v := range newStatusDict {
+	// 		oldStatusDict[k] = v
+	// 	}
+	// 	oldEntryDict["status"] = oldStatusDict
+	// 	body, _ = json.Marshal(oldEntryDict)
+	// 	_, err = r.Client.HSet(r.Ctx, key, "values", string(body)).Result()
+	// 	return entry.Value.ID, err
+	// }
+
+	// properties := map[string]interface{}{
+	// 	"values": string(body),
+	// 	"etag":   entry.Value.ETag,
+	// }
+	var etag int
+	etag, err = parseEtag(entry)
+	if err != nil {
+		return entry.Value.ID, err
 	}
-	_, err = r.Client.HSet(r.Ctx, key, properties).Result()
+	err = r.Client.Do(r.Ctx, "EVAL", setDefaultQuery, 1, key, etag, string(body), firstWrite).Err()
+	//_, err = r.Client.HSet(r.Ctx, key, properties).Result()
+	if err != nil {
+		rLog.ErrorfCtx(ctx, "  P (Redis State): failed to upsert state %s with keyPrefix %s with error %s", entry.Value.ID, keyPrefix, err.Error())
+	}
 	return entry.Value.ID, err
 }
 
@@ -269,8 +306,19 @@ func (r *RedisStateProvider) Delete(ctx context.Context, request states.DeleteRe
 	rLog.DebugfCtx(ctx, "  P (Redis State): delete state %s with keyPrefix %s", request.ID, keyPrefix)
 
 	HKey := fmt.Sprintf("%s%s%s", keyPrefix, separator, request.ID)
-	_, err = r.Client.Del(r.Ctx, HKey).Result()
-	return nil
+
+	var etag string
+	if request.ETag == nil || *request.ETag == "" {
+		etag = "0"
+	} else {
+		etag = *request.ETag
+	}
+	err = r.Client.Do(r.Ctx, "EVAL", delDefaultQuery, 1, HKey, etag).Err()
+	if err != nil {
+		rLog.ErrorfCtx(ctx, "  P (Redis State): failed to delete state %s with keyPrefix %s with error %s", request.ID, keyPrefix, err.Error())
+	}
+	//_, err = r.Client.Del(r.Ctx, HKey).Result()
+	return err
 }
 
 func (r *RedisStateProvider) Get(ctx context.Context, request states.GetRequest) (states.StateEntry, error) {
@@ -350,7 +398,7 @@ func getObjectTypePrefixForList(metadata map[string]interface{}) (string, error)
 
 func CastRedisPropertiesToStateEntry(id string, properties map[string]string) (states.StateEntry, error) {
 	entry := states.StateEntry{}
-	entry.ETag = properties["etag"]
+	entry.ETag = properties["version"]
 	// Body should be a map[string]interface{} to be align with other state providers
 	var BodyDict map[string]interface{}
 	err := json.Unmarshal([]byte(properties["values"]), &BodyDict)
@@ -362,24 +410,36 @@ func CastRedisPropertiesToStateEntry(id string, properties map[string]string) (s
 	return entry, nil
 }
 
-func getStatusDictFromMarshalStateEntryBody(body []byte) (map[string]interface{}, map[string]interface{}, error) {
-	var EntryDict map[string]interface{}
-	err := json.Unmarshal([]byte(body), &EntryDict)
+func parseEtag(req states.UpsertRequest) (int, error) {
+	if req.Options.Concurrency == states.LastWrite || req.ETag == nil || *req.ETag == "" {
+		return 0, nil
+	}
+	ver, err := strconv.Atoi(*req.ETag)
 	if err != nil {
-		return nil, nil, err
+		return -1, v1alpha2.NewCOAError(err, fmt.Sprintf("invalid etag %s", *req.ETag), v1alpha2.BadRequest)
 	}
-	if EntryDict == nil {
-		EntryDict = make(map[string]interface{})
-	}
-	var statusDict map[string]interface{}
-	var j []byte
-	j, _ = json.Marshal(EntryDict["status"])
-	err = json.Unmarshal(j, &statusDict)
-	if err != nil {
-		return nil, nil, err
-	}
-	if statusDict == nil {
-		statusDict = make(map[string]interface{})
-	}
-	return EntryDict, statusDict, nil
+
+	return ver, nil
 }
+
+// func getStatusDictFromMarshalStateEntryBody(body []byte) (map[string]interface{}, map[string]interface{}, error) {
+// 	var EntryDict map[string]interface{}
+// 	err := json.Unmarshal([]byte(body), &EntryDict)
+// 	if err != nil {
+// 		return nil, nil, err
+// 	}
+// 	if EntryDict == nil {
+// 		EntryDict = make(map[string]interface{})
+// 	}
+// 	var statusDict map[string]interface{}
+// 	var j []byte
+// 	j, _ = json.Marshal(EntryDict["status"])
+// 	err = json.Unmarshal(j, &statusDict)
+// 	if err != nil {
+// 		return nil, nil, err
+// 	}
+// 	if statusDict == nil {
+// 		statusDict = make(map[string]interface{})
+// 	}
+// 	return EntryDict, statusDict, nil
+// }
