@@ -1,0 +1,28 @@
+##
+## Copyright (c) Microsoft Corporation.
+## Licensed under the MIT license.
+## SPDX-License-Identifier: MIT
+##
+
+apiVersion: solution.symphony/v1
+kind: SolutionContainer
+metadata:
+  name: testsolutioncontainer
+spec:  
+---
+apiVersion: solution.symphony/v1
+kind: Solution
+metadata:
+  annotations: {}
+  name: testsolutioncontainer-v-v1
+spec:
+  rootResource: testsolutioncontainer
+  components:
+  - name: sample-prometheus-server
+    type: container
+    properties:
+      container.ports: "[{\"containerPort\":9090,\"protocol\":\"TCP\"}]"
+      container.imagePullPolicy: "Always"
+      container.resources: "{\"requests\":{\"cpu\":\"1\",\"memory\":\"100Mi\"}}"        
+      container.image: "prom/prometheus"
+  displayName: testsolution
