@@ -3,7 +3,7 @@
         "type": "String",
         "metadata": {
             "displayName": "Effect",
-            "description": "'Audit' allows a non-compliant resource to be created, but flags it as non-compliant. 'Disable' turns off the policy.",
+            "description": "\u0027Audit\u0027 allows a non-compliant resource to be created, but flags it as non-compliant. \u0027Disable\u0027 turns off the policy.",
             "portalReview": true
         },
         "allowedValues": [
@@ -62,7 +62,7 @@
                                 "type": "string"
                             },
                             "operator": {
-                                "description": "operator represents a key's relationship to a set of values.",
+                                "description": "operator represents a key\u0027s relationship to a set of values.",
                                 "type": "string",
                                 "enum": [
                                     "In",
