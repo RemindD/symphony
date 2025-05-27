@@ -1,1 +1,25 @@
-{\"if\":{\"field\":\"type\",\"in\":[\"Microsoft.Kubernetes/connectedClusters\"]},\"then\":{\"effect\":\"[parameters('effect')]\",\"details\":{\"templateInfo\":{\"sourceType\":\"PublicURL\",\"url\":\"https://raw.githubusercontent.com/deislabs/ratify/main/library/default/template.yaml\"},\"apiGroups\":[\"\"],\"kinds\":[\"Pod\"],\"excludedNamespaces\":\"[parameters('excludedNamespaces')]\",\"namespaces\":\"[parameters('namespaces')]\",\"labelSelector\":\"[parameters('labelSelector')]\"}}}
+
+    "if": {
+        "field": "type",
+        "in": [
+            "Microsoft.Kubernetes/connectedClusters"
+        ]
+    },
+    "then": {
+        "effect": "[parameters('effect')]",
+        "details": {
+            "templateInfo": {
+                "sourceType": "PublicURL",
+                "url": "https://raw.githubusercontent.com/deislabs/ratify/main/library/default/template.yaml"
+            },
+            "apiGroups": [
+                ""
+            ],
+            "kinds": [
+                "Pod"
+            ],
+            "excludedNamespaces": "[parameters('excludedNamespaces')]",
+            "namespaces": "[parameters('namespaces')]",
+            "labelSelector": "[parameters('labelSelector')]"
+        }
+    }
