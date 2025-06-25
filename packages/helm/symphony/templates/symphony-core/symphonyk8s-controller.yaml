@@ -54,6 +54,9 @@ spec:
         - containerPort: 9443
           name: webhook-server
           protocol: TCP
+        - containerPort: 6060
+          name: pprof
+          protocol: TCP
         readinessProbe:
           httpGet:
             path: /readyz
@@ -104,6 +107,17 @@ spec:
           requests:
             cpu: 5m
             memory: 64Mi
+      - name: profiler
+        image: busybox
+        command: ["/bin/sh", "-c"]
+        args:
+          - while true; do
+              wget -O /profiles/heap.prof http://localhost:6060/debug/pprof/heap;
+              sleep 60;
+            done;
+        volumeMounts:
+        - name: profiles
+          mountPath: /profiles
       securityContext:
         runAsNonRoot: true
       serviceAccountName: '{{ include "symphony.fullname" . }}-controller-manager'
@@ -137,3 +151,5 @@ spec:
           name: '{{ include "symphony.fullname" . }}-observability-configmap'
           optional: true
         name: observability-config-map
+      - name: profiles
+        emptyDir: {}

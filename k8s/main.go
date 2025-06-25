@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -47,7 +48,11 @@ import (
 	monitorcontrollers "gopls-workspace/controllers/monitor"
 	solutioncontrollers "gopls-workspace/controllers/solution"
 	workflowcontrollers "gopls-workspace/controllers/workflow"
+
 	//+kubebuilder:scaffold:imports
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 type LogMode string
@@ -155,6 +160,10 @@ func main() {
 	if logMode.IsUndefined() {
 		logMode = Development
 	}
+
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 
 	// Create a custom EncoderConfig
 	encoderConfig := zapcore.EncoderConfig{
