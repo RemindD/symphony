@@ -18,12 +18,14 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+	"runtime"
+
 	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/utils"
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2/observability"
 	"github.com/eclipse-symphony/symphony/coa/pkg/logger"
 	zaplog "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"k8s.io/apimachinery/pkg/runtime"
+	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -104,7 +106,7 @@ func (l *LogMode) IsUndefined() bool {
 }
 
 var (
-	scheme      = runtime.NewScheme()
+	scheme      = apiruntime.NewScheme()
 	setupLog    = ctrl.Log.WithName("setup")
 	apiCertPath = os.Getenv(constants.ApiCertEnvName)
 )
