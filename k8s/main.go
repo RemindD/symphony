@@ -540,6 +540,31 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+
+	go logMemStats()
+}
+
+func logMemStats() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+
+		fmt.Println("=== Go Memory Stats ===")
+		fmt.Printf("Sys (total requested from OS):         %d KB\n", m.Sys/1024)
+		fmt.Printf("HeapSys (heap reserved):               %d KB\n", m.HeapSys/1024)
+		fmt.Printf("  HeapInuse (heap in-use):             %d KB\n", m.HeapInuse/1024)
+		fmt.Printf("  HeapIdle (heap unused):              %d KB\n", m.HeapIdle/1024)
+		fmt.Printf("  HeapReleased (heap returned to OS):  %d KB\n", m.HeapReleased/1024)
+		fmt.Printf("StackSys (stack reserved):             %d KB\n", m.StackSys/1024)
+		fmt.Printf("  StackInuse (stack in-use):           %d KB\n", m.StackInuse/1024)
+		fmt.Printf("MSpanSys (allocator spans):            %d KB\n", m.MSpanSys/1024)
+		fmt.Printf("MCacheSys (allocator caches):          %d KB\n", m.MCacheSys/1024)
+		fmt.Printf("GCSys (GC metadata):                   %d KB\n", m.GCSys/1024)
+		fmt.Printf("OtherSys (runtime/metadata):           %d KB\n\n", m.OtherSys/1024)
+	}
 }
 
 func initLogs(configPath string) (*observability.Observability, error) {
