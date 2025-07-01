@@ -168,6 +168,7 @@ func main() {
 	go func() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
+	go logMemStats()
 
 	// Create a custom EncoderConfig
 	encoderConfig := zapcore.EncoderConfig{
@@ -545,7 +546,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	go logMemStats()
 }
 
 func logMemStats() {
