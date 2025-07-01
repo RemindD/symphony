@@ -8,11 +8,13 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,8 +65,6 @@ const (
 	Development LogMode = "development"
 	Production  LogMode = "production"
 )
-
-var mainlog = logger.NewLogger("coa.runtime")
 
 // Set implements flag.Value.
 func (l *LogMode) Set(s string) error {
@@ -549,27 +549,76 @@ func main() {
 }
 
 func logMemStats() {
-	ticker := time.NewTicker(1 * time.Minute)
 	ctx := context.Background()
+	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-
-	for range ticker.C {
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
-
-		mainlog.InfofCtx(ctx, "=== Go Memory Stats ===")
-		mainlog.InfofCtx(ctx, "Sys (total requested from OS):         %d KB\n", m.Sys/1024)
-		mainlog.InfofCtx(ctx, "HeapSys (heap reserved):               %d KB\n", m.HeapSys/1024)
-		mainlog.InfofCtx(ctx, "  HeapInuse (heap in-use):             %d KB\n", m.HeapInuse/1024)
-		mainlog.InfofCtx(ctx, "  HeapIdle (heap unused):              %d KB\n", m.HeapIdle/1024)
-		mainlog.InfofCtx(ctx, "  HeapReleased (heap returned to OS):  %d KB\n", m.HeapReleased/1024)
-		mainlog.InfofCtx(ctx, "StackSys (stack reserved):             %d KB\n", m.StackSys/1024)
-		mainlog.InfofCtx(ctx, "  StackInuse (stack in-use):           %d KB\n", m.StackInuse/1024)
-		mainlog.InfofCtx(ctx, "MSpanSys (allocator spans):            %d KB\n", m.MSpanSys/1024)
-		mainlog.InfofCtx(ctx, "MCacheSys (allocator caches):          %d KB\n", m.MCacheSys/1024)
-		mainlog.InfofCtx(ctx, "GCSys (GC metadata):                   %d KB\n", m.GCSys/1024)
-		mainlog.InfofCtx(ctx, "OtherSys (runtime/metadata):           %d KB\n\n", m.OtherSys/1024)
+	file, err := os.Create("/tmp/mem_stats.csv")
+	if err != nil {
+		fmt.Printf("failed to create file: %w", err)
 	}
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+	for {
+		select {
+		case <-ticker.C:
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+
+			// Create comprehensive CSV record with ALL memory stats
+			record := []string{
+				time.Now().Format("2006-01-02 15:04:05"),
+				// General statistics
+				strconv.FormatUint(bToKb(m.Alloc), 10),
+				strconv.FormatUint(bToKb(m.TotalAlloc), 10),
+				strconv.FormatUint(bToKb(m.Sys), 10),
+				strconv.FormatUint(m.Lookups, 10),
+				strconv.FormatUint(m.Mallocs, 10),
+				strconv.FormatUint(m.Frees, 10),
+				// Heap statistics
+				strconv.FormatUint(bToKb(m.HeapAlloc), 10),
+				strconv.FormatUint(bToKb(m.HeapSys), 10),
+				strconv.FormatUint(bToKb(m.HeapIdle), 10),
+				strconv.FormatUint(bToKb(m.HeapInuse), 10),
+				strconv.FormatUint(bToKb(m.HeapReleased), 10),
+				strconv.FormatUint(m.HeapObjects, 10),
+				// Stack statistics
+				strconv.FormatUint(bToKb(m.StackInuse), 10),
+				strconv.FormatUint(bToKb(m.StackSys), 10),
+				// Off-heap statistics
+				strconv.FormatUint(bToKb(m.MSpanInuse), 10),
+				strconv.FormatUint(bToKb(m.MSpanSys), 10),
+				strconv.FormatUint(bToKb(m.MCacheInuse), 10),
+				strconv.FormatUint(bToKb(m.MCacheSys), 10),
+				strconv.FormatUint(bToKb(m.BuckHashSys), 10),
+				strconv.FormatUint(bToKb(m.GCSys), 10),
+				strconv.FormatUint(bToKb(m.OtherSys), 10),
+				// Garbage collector statistics
+				strconv.FormatUint(bToKb(m.NextGC), 10),
+				strconv.FormatUint(m.LastGC, 10),
+				strconv.FormatUint(m.PauseTotalNs, 10),
+				strconv.FormatUint(m.PauseNs[(m.NumGC+255)%256], 10),  // Most recent pause
+				strconv.FormatUint(m.PauseEnd[(m.NumGC+255)%256], 10), // Most recent pause end
+				strconv.FormatUint(uint64(m.NumGC), 10),
+				strconv.FormatUint(uint64(m.NumForcedGC), 10),
+				strconv.FormatFloat(m.GCCPUFraction, 'f', 6, 64),
+				strconv.FormatBool(m.EnableGC),
+				strconv.FormatBool(m.DebugGC),
+			}
+
+			if err := writer.Write(record); err != nil {
+				log.Printf("Error writing CSV record: %v", err)
+			}
+			writer.Flush()
+
+		case <-ctx.Done():
+			log.Println("Memory monitoring stopped")
+			return
+		}
+	}
+}
+
+func bToKb(b uint64) uint64 {
+	return b / 1024
 }
 
 func initLogs(configPath string) (*observability.Observability, error) {
