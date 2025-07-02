@@ -12,7 +12,6 @@ import (
 	"os"
 	"time"
 
-	fabric_v1 "gopls-workspace/apis/fabric/v1"
 	solution_v1 "gopls-workspace/apis/solution/v1"
 	"gopls-workspace/configutils"
 	"gopls-workspace/constants"
@@ -28,7 +27,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
@@ -147,10 +145,6 @@ func (r *InstanceQueueingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		WithOptions((controller.Options{RecoverPanic: &recoverPanic})).
 		For(&solution_v1.Instance{}).
 		WithEventFilter(predicate.Or(generationChange, operationIdPredicate)).
-		Watches(new(solution_v1.Solution), handler.EnqueueRequestsFromMapFunc(
-			r.handleSolution)).
-		Watches(new(fabric_v1.Target), handler.EnqueueRequestsFromMapFunc(
-			r.handleTarget)).
 		Complete(r)
 }
 
