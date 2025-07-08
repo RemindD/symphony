@@ -108,11 +108,11 @@ func (r *InstanceReconciler) deploymentBuilder(ctx context.Context, object recon
 		err = v1alpha2.NewCOAError(err, "failed to get solution", v1alpha2.SolutionGetFailed)
 		diagnostic.ErrorWithCtx(log, ctx, err, "proceed with no solution found")
 	}
-	// Get targets
-	if err := r.List(ctx, &deploymentResources.TargetList, client.InNamespace(instance.Namespace)); err != nil {
-		err = v1alpha2.NewCOAError(err, "failed to list targets", v1alpha2.TargetListGetFailed)
-		diagnostic.ErrorWithCtx(log, ctx, err, "proceed with no targets found")
-	}
+	// // Get targets
+	// if err := r.List(ctx, &deploymentResources.TargetList, client.InNamespace(instance.Namespace)); err != nil {
+	// 	err = v1alpha2.NewCOAError(err, "failed to list targets", v1alpha2.TargetListGetFailed)
+	// 	diagnostic.ErrorWithCtx(log, ctx, err, "proceed with no targets found")
+	// }
 
 	// Get target candidates
 	deploymentResources.TargetCandidates = r.MatchTargetsForInstance(ctx, instance)
