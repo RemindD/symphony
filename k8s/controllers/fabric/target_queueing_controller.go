@@ -22,6 +22,7 @@ import (
 	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -137,6 +138,6 @@ func (r *TargetQueueingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Named("TargetQueueing").
 		WithOptions((controller.Options{RecoverPanic: &recoverPanic})).
 		WithEventFilter(predicate.Or(genChangePredicate, operationIdPredicate)).
-		For(&symphonyv1.Target{}).
+		For(&symphonyv1.Target{}, builder.OnlyMetadata).
 		Complete(r)
 }
