@@ -20,6 +20,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -119,6 +120,6 @@ func (r *TargetPollingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Named("TargetPolling").
 		WithOptions(controller.Options{RecoverPanic: &recoverPanic, MaxConcurrentReconciles: r.PollingConcurrentReconciles}).
 		WithEventFilter(jobIDPredicate).
-		For(&symphonyv1.Target{}).
+		For(&symphonyv1.Target{}, builder.OnlyMetadata).
 		Complete(r)
 }

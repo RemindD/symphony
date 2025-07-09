@@ -26,6 +26,7 @@ import (
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -145,7 +146,7 @@ func (r *InstanceQueueingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("InstanceQueueing").
 		WithOptions((controller.Options{RecoverPanic: &recoverPanic})).
-		For(&solution_v1.Instance{}).
+		For(&solution_v1.Instance{}, builder.OnlyMetadata).
 		WithEventFilter(predicate.Or(generationChange, operationIdPredicate)).
 		Watches(new(solution_v1.Solution), handler.EnqueueRequestsFromMapFunc(
 			r.handleSolution)).
