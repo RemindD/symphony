@@ -8,6 +8,8 @@ package script
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -196,6 +198,149 @@ func TestGetScriptFromUrl(t *testing.T) {
 	})
 	assert.NotNil(t, err)
 	assert.Contains(t, err.Error(), "executing script returned error output")
+}
+
+// TestInitWithSignature tests initialization with signature verification config
+func TestInitWithSignature(t *testing.T) {
+	provider := ScriptProvider{}
+	err := provider.InitWithMap(map[string]string{
+		"name":                 "test",
+		"stagingFolder":        "./staging",
+		"scriptFolder":         "https://test.example.com/scripts",
+		"applyScript":          "mock-apply.sh",
+		"removeScript":         "mock-remove.sh",
+		"getScript":            "mock-get.sh",
+		"scriptEngine":         "bash",
+		"applyScriptSignature": "https://test.example.com/signatures/mock-apply.sh.sig",
+		"signingOIDCIssuer":    "https://issuer.example.com",
+		"signingOIDCIdentity":  "test@example.com",
+	})
+	require.Nil(t, err)
+}
+
+// TestInitFailsWithoutOIDCParams tests that init fails if signatures are specified without OIDC params
+func TestInitFailsWithoutOIDCParams(t *testing.T) {
+	provider := ScriptProvider{}
+	err := provider.InitWithMap(map[string]string{
+		"name":                 "test",
+		"stagingFolder":        "./staging",
+		"scriptFolder":         "https://test.example.com/scripts",
+		"applyScript":          "mock-apply.sh",
+		"removeScript":         "mock-remove.sh",
+		"getScript":            "mock-get.sh",
+		"scriptEngine":         "bash",
+		"applyScriptSignature": "https://test.example.com/signatures/mock-apply.sh.sig",
+	})
+	require.NotNil(t, err)
+	assert.Contains(t, err.Error(), "OIDC issuer required when script signatures are specified")
+}
+
+// TestInitWithMultipleSignatures tests initialization with multiple script signatures
+func TestInitWithInvalidSignatures(t *testing.T) {
+	provider := ScriptProvider{}
+	err := provider.InitWithMap(map[string]string{
+		"name":                  "test",
+		"stagingFolder":         "./staging",
+		"scriptFolder":          "https://test.example.com/scripts",
+		"applyScript":           "mock-apply.sh",
+		"removeScript":          "mock-remove.sh",
+		"getScript":             "mock-get.sh",
+		"scriptEngine":          "bash",
+		"applyScriptSignature":  "https://test.example.com/signatures/mock-apply.sh.sig",
+		"removeScriptSignature": "https://test.example.com/signatures/mock-remove.sh.sig",
+		"getScriptSignature":    "https:script//test.example.com/signatures/mock-get.sh.sig",
+		"signingOIDCIssuer":     "https://issuer.example.com",
+		"signingOIDCIdentity":   "test@example.com",
+	})
+	require.NotNil(t, err)
+}
+
+// TestScriptVerification tests actual script signature verification
+func TestScriptVerification(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptFolder := "https://raw.githubusercontent.com/RemindD/symphony/users/xingdong/signature/api/pkg/apis/v1alpha1/providers/target/script/"
+	// Test the provider
+	provider := ScriptProvider{}
+	err := provider.InitWithMap(map[string]string{
+		"name":                  "test",
+		"stagingFolder":         tmpDir,
+		"scriptFolder":          scriptFolder,
+		"applyScript":           "mock-apply.sh",
+		"removeScript":          "mock-remove.sh",
+		"getScript":             "mock-get.sh",
+		"applyScriptSignature":  scriptFolder + "/mock-apply.sh.bundle",
+		"removeScriptSignature": scriptFolder + "/mock-remove.sh.bundle",
+		"getScriptSignature":    scriptFolder + "/mock-get.sh.bundle",
+		"signingOIDCIssuer":     "https://github.com/login/oauth",
+		"signingOIDCIdentity":   "xdlisjtu@gmail.com",
+	})
+	require.Nil(t, err)
+}
+
+func TestScriptVerificationLocal(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptFolder := "/home/xingdong/symphony/api/pkg/apis/v1alpha1/providers/target/script/"
+	// Test the provider
+	provider := ScriptProvider{}
+	err := provider.InitWithMap(map[string]string{
+		"name":                  "test",
+		"stagingFolder":         tmpDir,
+		"scriptFolder":          scriptFolder,
+		"applyScript":           "mock-apply.sh",
+		"removeScript":          "mock-remove.sh",
+		"getScript":             "mock-get.sh",
+		"applyScriptSignature":  "",
+		"removeScriptSignature": "",
+		"getScriptSignature":    scriptFolder + "/mock-get.sh.bundle",
+		"signingOIDCIssuer":     "https://github.com/login/oauth",
+		"signingOIDCIdentity":   "xdlisjtu@gmail.com",
+	})
+	require.Nil(t, err)
+	ctx := context.Background()
+	err = provider.verifyScript(ctx, "/home/xingdong/symphony/api/pkg/apis/v1alpha1/providers/target/script/mock-get.sh", provider.Config.GetScriptSignature)
+	require.Nil(t, err)
+}
+
+// TestScriptVerificationFailure tests that verification fails with invalid signature
+func TestScriptVerificationFailure(t *testing.T) {
+	testScriptProvider := os.Getenv("TEST_SCRIPT_PROVIDER")
+	if testScriptProvider == "" {
+		t.Skip("Skipping because TEST_SCRIPT_PROVIDER environment variable is not set")
+	}
+
+	// Create test files
+	tmpDir := t.TempDir()
+	scriptContent := []byte("#!/bin/bash\necho 'test'\n")
+	invalidSig := []byte("invalid signature")
+
+	scriptPath := filepath.Join(tmpDir, "test.sh")
+	sigPath := filepath.Join(tmpDir, "test.sh.sig")
+
+	err := os.WriteFile(scriptPath, scriptContent, 0644)
+	require.Nil(t, err)
+	err = os.WriteFile(sigPath, invalidSig, 0644)
+	require.Nil(t, err)
+
+	// Create HTTP server to serve files
+	fs := http.FileServer(http.Dir(tmpDir))
+	server := httptest.NewServer(fs)
+	defer server.Close()
+
+	// Test the provider
+	provider := ScriptProvider{}
+	err = provider.InitWithMap(map[string]string{
+		"name":                 "test",
+		"stagingFolder":        tmpDir,
+		"scriptFolder":         server.URL,
+		"applyScript":          "test.sh",
+		"removeScript":         "test.sh",
+		"getScript":            "test.sh",
+		"applyScriptSignature": server.URL + "/test.sh.sig",
+		"signingOIDCIssuer":    "https://container.googleapis.com/v1/projects/project-id/locations/global",
+		"signingOIDCIdentity":  "serviceAccount:test@project-id.iam.gserviceaccount.com",
+	})
+	require.NotNil(t, err)
+	assert.Contains(t, err.Error(), "script verification failed")
 }
 
 // Conformance: you should call the conformance suite to ensure provider conformance

@@ -10,11 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -22,6 +24,7 @@ import (
 
 	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/model"
 	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/providers/metrics"
+	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/verify"
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2"
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2/contexts"
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2/observability"
@@ -51,6 +54,15 @@ type ScriptProviderConfig struct {
 	ScriptFolder  string `json:"scriptFolder,omitempty"`
 	StagingFolder string `json:"stagingFolder,omitempty"`
 	ScriptEngine  string `json:"scriptEngine,omitempty"`
+
+	// Signature URLs for script verification
+	ApplyScriptSignature  string `json:"applyScriptSignature,omitempty"`
+	RemoveScriptSignature string `json:"removeScriptSignature,omitempty"`
+	GetScriptSignature    string `json:"getScriptSignature,omitempty"`
+
+	// OIDC parameters for signature verification
+	SigningOIDCIssuer   string `json:"signingOIDCIssuer,omitempty"`
+	SigningOIDCIdentity string `json:"signingOIDCIdentity,omitempty"`
 }
 
 type ScriptProvider struct {
@@ -90,7 +102,32 @@ func ScriptProviderConfigFromMap(properties map[string]string) (ScriptProviderCo
 		ret.ScriptEngine = "bash"
 	}
 	if ret.ScriptEngine != "bash" && ret.ScriptEngine != "powershell" {
-		return ret, v1alpha2.NewCOAError(nil, "invalid script engine, exptected 'bash' or 'powershell'", v1alpha2.BadConfig)
+		return ret, v1alpha2.NewCOAError(nil, "invalid script engine, expected 'bash' or 'powershell'", v1alpha2.BadConfig)
+	}
+
+	// Optional signature URLs
+	if v, ok := properties["applyScriptSignature"]; ok {
+		ret.ApplyScriptSignature = v
+	}
+	if v, ok := properties["removeScriptSignature"]; ok {
+		ret.RemoveScriptSignature = v
+	}
+	if v, ok := properties["getScriptSignature"]; ok {
+		ret.GetScriptSignature = v
+	}
+
+	// If any signatures are provided, OIDC parameters are required
+	if ret.ApplyScriptSignature != "" || ret.RemoveScriptSignature != "" || ret.GetScriptSignature != "" {
+		if v, ok := properties["signingOIDCIssuer"]; ok {
+			ret.SigningOIDCIssuer = v
+		} else {
+			return ret, v1alpha2.NewCOAError(nil, "OIDC issuer required when script signatures are specified", v1alpha2.BadConfig)
+		}
+		if v, ok := properties["signingOIDCIdentity"]; ok {
+			ret.SigningOIDCIdentity = v
+		} else {
+			return ret, v1alpha2.NewCOAError(nil, "OIDC identity required when script signatures are specified", v1alpha2.BadConfig)
+		}
 	}
 	return ret, nil
 }
@@ -126,20 +163,52 @@ func (i *ScriptProvider) Init(config providers.IProviderConfig) error {
 	i.Config = updateConfig
 
 	if strings.HasPrefix(i.Config.ScriptFolder, "http") {
+		// Download and verify apply script
 		err = downloadFile(i.Config.ScriptFolder, i.Config.ApplyScript, i.Config.StagingFolder)
 		if err != nil {
 			sLog.ErrorfCtx(ctx, "  P (Script Target): failed to download apply script %s, error: %+v", i.Config.ApplyScript, err)
 			return err
 		}
+		scriptPath := filepath.Join(i.Config.StagingFolder, i.Config.ApplyScript)
+		if i.Config.ApplyScriptSignature != "" {
+			err = i.verifyScript(ctx, scriptPath, i.Config.ApplyScriptSignature)
+			if err != nil {
+				sLog.ErrorfCtx(ctx, "  P (Script Target): failed to verify apply script: %+v", err)
+				os.Remove(scriptPath)
+				return err
+			}
+		}
+
+		// Download and verify remove script
 		err = downloadFile(i.Config.ScriptFolder, i.Config.RemoveScript, i.Config.StagingFolder)
 		if err != nil {
 			sLog.ErrorfCtx(ctx, "  P (Script Target): failed to download remove script %s, error: %+v", i.Config.RemoveScript, err)
 			return err
 		}
+		scriptPath = filepath.Join(i.Config.StagingFolder, i.Config.RemoveScript)
+		if i.Config.RemoveScriptSignature != "" {
+			err = i.verifyScript(ctx, scriptPath, i.Config.RemoveScriptSignature)
+			if err != nil {
+				sLog.ErrorfCtx(ctx, "  P (Script Target): failed to verify remove script: %+v", err)
+				os.Remove(scriptPath)
+				return err
+			}
+		}
+
+		// Download and verify get script
 		err = downloadFile(i.Config.ScriptFolder, i.Config.GetScript, i.Config.StagingFolder)
 		if err != nil {
 			sLog.ErrorfCtx(ctx, "  P (Script Target): failed to download get script %s, error: %+v", i.Config.GetScript, err)
 			return err
+		}
+		scriptPath = filepath.Join(i.Config.StagingFolder, i.Config.GetScript)
+		if i.Config.GetScriptSignature != "" {
+			err = i.verifyScript(ctx, scriptPath, i.Config.GetScriptSignature)
+			if err != nil {
+				sLog.ErrorfCtx(ctx, "  P (Script Target): failed to verify get script: %+v", err)
+				os.Remove(scriptPath)
+				return err
+			}
 		}
 	}
 
@@ -415,6 +484,61 @@ func (*ScriptProvider) GetValidationRule(ctx context.Context) model.ValidationRu
 			OptionalMetadata:      []string{},
 		},
 	}
+}
+
+// createVerifier creates a cosign verifier with OIDC identity requirements
+func createVerifier(oidcIssuer, oidcIdentity string) (*verify.SignatureVerifier, error) {
+	verifier, err := verify.NewSignatureVerifier(context.Background(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create signature verifier: %w", err)
+	}
+
+	if oidcIssuer != "" && oidcIdentity != "" {
+		verifier.WithIdentityRegExp(oidcIssuer, oidcIdentity)
+	} else {
+		return nil, fmt.Errorf("OIDC issuer and identity must be specified for signature verification")
+	}
+
+	return verifier, nil
+}
+
+// verifyScript verifies a downloaded script using its signature URL
+func (i *ScriptProvider) verifyScript(ctx context.Context, scriptPath string, signatureURL string) error {
+	if signatureURL == "" {
+		return nil // Skip verification if no signature
+	}
+
+	// Validate OIDC parameters
+	if i.Config.SigningOIDCIssuer == "" || i.Config.SigningOIDCIdentity == "" {
+		return fmt.Errorf("OIDC parameters required when script signatures are specified")
+	}
+
+	// Create verifier
+	verifier, err := createVerifier(i.Config.SigningOIDCIssuer, i.Config.SigningOIDCIdentity)
+	if err != nil {
+		return fmt.Errorf("failed to create verifier: %w", err)
+	}
+
+	// Download signature to temporary file
+	sigPath := signatureURL
+	if strings.HasPrefix(signatureURL, "http") {
+		sigFolder := filepath.Join(i.Config.StagingFolder, uuid.New().String())
+		sigName := filepath.Base(signatureURL)
+		err = downloadFile(strings.TrimSuffix(signatureURL, sigName), sigName, sigFolder)
+		if err != nil {
+			return fmt.Errorf("failed to download signature: %w", err)
+		}
+		sigPath = path.Join(sigFolder, sigName)
+		defer os.Remove(sigFolder)
+	}
+
+	// Verify signature
+	err = verifier.VerifyLocalBlob(ctx, scriptPath, sigPath)
+	if err != nil {
+		return fmt.Errorf("script verification failed: %w", err)
+	}
+
+	return nil
 }
 
 func (i *ScriptProvider) runCommand(scriptAbs string, parameters ...string) ([]byte, error) {

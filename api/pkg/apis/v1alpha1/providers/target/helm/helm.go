@@ -24,12 +24,15 @@ import (
 	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/model"
 	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/providers/metrics"
 	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/utils/metahelper"
+	"github.com/eclipse-symphony/symphony/api/pkg/apis/v1alpha1/verify"
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2"
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2/contexts"
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2/observability"
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2/observability/utils"
 	"github.com/eclipse-symphony/symphony/coa/pkg/apis/v1alpha2/providers"
 	"github.com/eclipse-symphony/symphony/coa/pkg/logger"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
@@ -84,13 +87,16 @@ type (
 	}
 	// HelmChartProperty is the property for the Helm Charts
 	HelmChartProperty struct {
-		Repo     string `json:"repo"`
-		Name     string `json:"name,omitempty"`
-		Version  string `json:"version"`
-		Wait     bool   `json:"wait"`
-		Timeout  string `json:"timeout,omitempty"`
-		Username string `json:"username,omitempty"`
-		Password string `json:"password,omitempty"`
+		Repo                string `json:"repo"`
+		Name                string `json:"name,omitempty"`
+		Signature           string `json:"signature,omitempty"` // optional signature for the chart
+		Version             string `json:"version"`
+		Wait                bool   `json:"wait"`
+		Timeout             string `json:"timeout,omitempty"`
+		Username            string `json:"username,omitempty"`
+		Password            string `json:"password,omitempty"`
+		SigningOIDCIssuer   string `json:"signingOIDCIssuer,omitempty"`   // optional OIDC issuer for signing
+		SigningOIDCIdentity string `json:"signingOIDCIdentity,omitempty"` // optional OIDC identity for signing
 	}
 )
 
@@ -644,8 +650,275 @@ func (i *HelmTargetProvider) Apply(ctx context.Context, deployment model.Deploym
 	return ret, nil
 }
 
+// createVerifier creates a cosign verifier with OIDC identity requirements
+func createVerifier(oidcIssuer, oidcIdentity string) (*verify.SignatureVerifier, error) {
+	verifier, err := verify.NewSignatureVerifier(context.Background(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create signature verifier: %w", err)
+	}
+
+	if oidcIssuer != "" && oidcIdentity != "" {
+		verifier.WithIdentityRegExp(oidcIssuer, oidcIdentity)
+	} else {
+		return nil, fmt.Errorf("OIDC issuer and identity must be specified for signature verification")
+	}
+
+	return verifier, nil
+}
+
+// Helper functions to determine chart and signature types
+func isOCIChart(repo string) bool {
+	return strings.HasPrefix(repo, "oci://") || (!strings.HasPrefix(repo, "http://") && !strings.HasPrefix(repo, "https://"))
+}
+
+func isInplaceSignature(signature string) bool {
+	return signature == "inplace"
+}
+
+// validateSignatureCombination validates that the chart/signature combination is valid
+func validateSignatureCombination(chart *HelmChartProperty) error {
+	isOCI := isOCIChart(chart.Repo)
+	isInplace := isInplaceSignature(chart.Signature)
+
+	// HTTP charts cannot have inplace signatures
+	if !isOCI && isInplace {
+		return fmt.Errorf("invalid combination: HTTP charts cannot have inplace signatures")
+	}
+
+	return nil
+}
+
+// needsPostVerification determines if post-download verification is needed
+func (i *HelmTargetProvider) needsPostVerification(chart *HelmChartProperty) bool {
+	if chart.Signature == "" {
+		return false // No signature to verify
+	}
+
+	isOCI := isOCIChart(chart.Repo)
+	isInplace := isInplaceSignature(chart.Signature)
+
+	// Only HTTP charts with URL signatures need post-verification
+	// OCI charts are fully verified in pre-verification
+	return !isOCI && !isInplace
+}
+
+// preVerifySignature verifies the chart signature before downloading the chart content
+// This eliminates the need to download large chart files if signature is invalid
+// Returns the cached signature file path for HTTP charts, empty string for others
+func (i *HelmTargetProvider) preVerifySignature(ctx context.Context, chart *HelmChartProperty) (string, error) {
+	// Skip verification if no signature specified
+	if chart.Signature == "" {
+		sLog.DebugCtx(ctx, "  P (Helm Target): No signature specified, skipping verification")
+		return "", nil
+	}
+
+	// Validate that the chart/signature combination is valid
+	err := validateSignatureCombination(chart)
+	if err != nil {
+		return "", err
+	}
+
+	sLog.InfofCtx(ctx, "  P (Helm Target): Pre-verifying chart signature before download for chart: %s", chart.Repo)
+
+	// Create cosign verifier with OIDC identity requirements
+	verifier, err := createVerifier(chart.SigningOIDCIssuer, chart.SigningOIDCIdentity)
+	if err != nil {
+		return "", fmt.Errorf("failed to create verifier: %w", err)
+	}
+
+	isOCI := isOCIChart(chart.Repo)
+	isInplace := isInplaceSignature(chart.Signature)
+
+	if isOCI && isInplace {
+		// OCI Registry with inplace signature - full verification without downloading chart
+		err = i.preVerifyOCIInplaceSignature(ctx, verifier, chart)
+		return "", err
+	} else if isOCI && !isInplace {
+		// OCI Registry with HTTP signature - full verification using chart digest
+		err = i.preVerifyOCIWithHTTPSignature(ctx, verifier, chart)
+		return "", err
+	} else if !isOCI && !isInplace {
+		// HTTP chart with HTTP signature - basic validation and cache signature file
+		return i.preVerifyHTTPSignature(ctx, chart)
+	}
+
+	// This should never happen due to validateSignatureCombination check above
+	return "", fmt.Errorf("unexpected chart/signature combination")
+}
+
+// preVerifyOCIInplaceSignature verifies OCI charts with inplace signatures without downloading chart content
+func (i *HelmTargetProvider) preVerifyOCIInplaceSignature(ctx context.Context, verifier *verify.SignatureVerifier, chart *HelmChartProperty) error {
+	chartRef := fmt.Sprintf("%s:%s", strings.TrimPrefix(chart.Repo, "oci://"), chart.Version)
+	sLog.InfofCtx(ctx, "  P (Helm Target): Pre-verifying OCI chart inplace signature for: %s", chartRef)
+
+	// Try verification with current authentication state first
+	_, _, err := verifier.VerifyWithKeychain(ctx, chartRef)
+	if err == nil {
+		sLog.InfofCtx(ctx, "  P (Helm Target): OCI chart inplace signature pre-verification successful")
+		return nil
+	}
+
+	// If verification failed due to auth issues, handle authentication
+	if isUnauthorized(err) {
+		if chart.Username != "" && chart.Password != "" {
+			sLog.InfoCtx(ctx, "  P (Helm Target): Retrying OCI inplace signature verification with basic auth")
+			_, _, err = verifier.VerifyWithBasicAuth(ctx, chartRef, chart.Username, chart.Password)
+			if err == nil {
+				sLog.InfofCtx(ctx, "  P (Helm Target): OCI chart inplace signature verification successful with basic auth")
+				return nil
+			}
+			return fmt.Errorf("OCI inplace signature verification failed with basic auth: %w", err)
+		} else {
+			// Handle ACR authentication
+			host, herr := getHostFromOCIRef(chart.Repo)
+			if herr != nil {
+				return fmt.Errorf("failed to get host from OCI ref for verification: %w", herr)
+			}
+
+			if isAzureContainerRegistry(host) {
+				sLog.InfoCtx(ctx, "  P (Helm Target): Attempting ACR login for OCI inplace signature verification")
+				err = loginToACR(ctx, host)
+				if err != nil {
+					return fmt.Errorf("failed to login to ACR for verification: %w", err)
+				}
+
+				_, _, err = verifier.VerifyWithKeychain(ctx, chartRef)
+				if err == nil {
+					sLog.InfofCtx(ctx, "  P (Helm Target): OCI chart inplace signature verification successful after ACR login")
+					return nil
+				}
+				return fmt.Errorf("OCI inplace signature verification failed after ACR login: %w", err)
+			}
+		}
+	}
+
+	return fmt.Errorf("OCI chart inplace signature verification failed: %w", err)
+}
+
+// preVerifyOCIWithHTTPSignature verifies OCI charts with HTTP signatures using chart digest (no chart download)
+func (i *HelmTargetProvider) preVerifyOCIWithHTTPSignature(ctx context.Context, verifier *verify.SignatureVerifier, chart *HelmChartProperty) error {
+	chartRef := fmt.Sprintf("%s:%s", strings.TrimPrefix(chart.Repo, "oci://"), chart.Version)
+	sLog.InfofCtx(ctx, "  P (Helm Target): Pre-verifying OCI chart with HTTP signature. Chart: %s, Signature: %s", chartRef, chart.Signature)
+
+	// Try verification with current authentication state first
+	err := verifier.VerifyOCIChartDigestFromHTTPSignature(ctx, chartRef, chart.Signature, []remote.Option{
+		remote.WithContext(ctx),
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+	})
+	if err == nil {
+		sLog.InfofCtx(ctx, "  P (Helm Target): OCI chart HTTP signature verification successful")
+		return nil
+	}
+
+	// If verification failed due to auth issues, handle authentication
+	if isUnauthorized(err) {
+		if chart.Username != "" && chart.Password != "" {
+			sLog.InfoCtx(ctx, "  P (Helm Target): Retrying OCI chart HTTP signature verification with basic auth")
+			err = verifier.VerifyOCIChartDigestFromHTTPSignatureWithBasicAuth(ctx, chartRef, chart.Signature, chart.Username, chart.Password)
+			if err == nil {
+				sLog.InfofCtx(ctx, "  P (Helm Target): OCI chart HTTP signature verification successful with basic auth")
+				return nil
+			}
+			return fmt.Errorf("OCI chart HTTP signature verification failed with basic auth: %w", err)
+		} else {
+			// Handle ACR authentication
+			host, herr := getHostFromOCIRef(chart.Repo)
+			if herr != nil {
+				return fmt.Errorf("failed to get host from OCI ref for verification: %w", herr)
+			}
+
+			if isAzureContainerRegistry(host) {
+				sLog.InfoCtx(ctx, "  P (Helm Target): Attempting ACR login for OCI chart HTTP signature verification")
+				err = loginToACR(ctx, host)
+				if err != nil {
+					return fmt.Errorf("failed to login to ACR for verification: %w", err)
+				}
+
+				err = verifier.VerifyOCIChartDigestFromHTTPSignature(ctx, chartRef, chart.Signature, []remote.Option{
+					remote.WithContext(ctx),
+					remote.WithAuthFromKeychain(authn.DefaultKeychain),
+				})
+				if err == nil {
+					sLog.InfofCtx(ctx, "  P (Helm Target): OCI chart HTTP signature verification successful after ACR login")
+					return nil
+				}
+				return fmt.Errorf("OCI chart HTTP signature verification failed after ACR login: %w", err)
+			}
+		}
+	}
+
+	return fmt.Errorf("OCI chart HTTP signature verification failed: %w", err)
+}
+
+// preVerifyHTTPSignature downloads and caches the signature file for HTTP charts
+// Returns the cached signature file path for later use in post-verification
+func (i *HelmTargetProvider) preVerifyHTTPSignature(ctx context.Context, chart *HelmChartProperty) (string, error) {
+	sLog.InfofCtx(ctx, "  P (Helm Target): Pre-verifying HTTP chart signature accessibility. Signature URL: %s", chart.Signature)
+
+	// Create a temporary file for the signature (we'll keep this for post-verification)
+	sigFileName := fmt.Sprintf("%s/%s-sig.tmp", tempChartDir, uuid.New().String())
+
+	// Download only the signature file (small file) to verify accessibility
+	err := downloadFile(chart.Signature, sigFileName)
+	if err != nil {
+		os.Remove(sigFileName) // Clean up on error
+		return "", fmt.Errorf("failed to download signature file: %w", err)
+	}
+
+	// Read the signature content
+	sigContent, err := os.ReadFile(sigFileName)
+	if err != nil {
+		os.Remove(sigFileName) // Clean up on error
+		return "", fmt.Errorf("failed to read signature file: %w", err)
+	}
+
+	// Basic validation - check if signature is not empty
+	sigStr := strings.TrimSpace(string(sigContent))
+	if len(sigStr) == 0 {
+		os.Remove(sigFileName) // Clean up on error
+		return "", fmt.Errorf("signature file is empty")
+	}
+
+	sLog.InfofCtx(ctx, "  P (Helm Target): HTTP chart signature file accessible and valid")
+	return sigFileName, nil // Return the cached signature file path
+}
+
+// postVerifySignature performs full cryptographic verification after chart download
+// Only needed for HTTP charts with HTTP signatures
+func (i *HelmTargetProvider) postVerifySignature(ctx context.Context, chart *HelmChartProperty, chartPath, sigPath string) error {
+	sLog.InfofCtx(ctx, "  P (Helm Target): Post-verifying HTTP chart signature. Chart: %s, Signature: %s", chartPath, sigPath)
+
+	// Create cosign verifier with OIDC identity requirements
+	verifier, err := createVerifier(chart.SigningOIDCIssuer, chart.SigningOIDCIdentity)
+	if err != nil {
+		return fmt.Errorf("failed to create verifier: %w", err)
+	}
+
+	// Use VerifyLocalBlob with both local files (no more downloads!)
+	err = verifier.VerifyLocalBlob(ctx, chartPath, sigPath)
+	if err != nil {
+		return fmt.Errorf("HTTP chart signature verification failed: %w", err)
+	}
+
+	sLog.InfofCtx(ctx, "  P (Helm Target): HTTP chart signature verification successful")
+	return nil
+}
+
 func (i *HelmTargetProvider) pullChart(ctx context.Context, chart *HelmChartProperty) (fileName string, err error) {
 	fileName = fmt.Sprintf("%s/%s.tgz", tempChartDir, uuid.New().String())
+
+	// Pre-verify signature before downloading chart content (fail fast if signature is invalid)
+	// Returns cached signature file path for HTTP charts, empty string for others
+	cachedSigPath, err := i.preVerifySignature(ctx, chart)
+	if err != nil {
+		return "", fmt.Errorf("signature pre-verification failed: %w", err)
+	}
+	// Ensure we clean up cached signature file on any error
+	defer func() {
+		if cachedSigPath != "" && err != nil {
+			os.Remove(cachedSigPath)
+		}
+	}()
 
 	utils.EmitUserAuditsLogs(ctx, "   P (Helm Target): Starting pulling chart, repo - %s, name - %s, version - %s", chart.Repo, chart.Name, chart.Version)
 	if strings.HasPrefix(chart.Repo, "http") {
@@ -719,6 +992,20 @@ func (i *HelmTargetProvider) pullChart(ctx context.Context, chart *HelmChartProp
 			return
 		}
 	}
+
+	// Post-verify signature if needed (only for HTTP charts with HTTP signatures)
+	if i.needsPostVerification(chart) && cachedSigPath != "" {
+		err = i.postVerifySignature(ctx, chart, fileName, cachedSigPath)
+		if err != nil {
+			// Clean up on verification failure
+			os.Remove(fileName)
+			os.Remove(cachedSigPath)
+			return "", fmt.Errorf("chart signature post-verification failed: %w", err)
+		}
+		// Clean up cached signature file after successful verification
+		os.Remove(cachedSigPath)
+	}
+
 	return fileName, nil
 }
 
