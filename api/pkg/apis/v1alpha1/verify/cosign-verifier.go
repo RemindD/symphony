@@ -39,6 +39,14 @@ type SignatureVerifier struct {
 	identities []cosign.Identity
 	// Rekor client for transparency log verification
 	rekorClient *client.Rekor
+	// Rekor public keys for verification
+	rekorPubKeys *cosign.TrustedTransparencyLogPubKeys
+	// CT Log public keys for SCT verification
+	ctLogPubKeys *cosign.TrustedTransparencyLogPubKeys
+	// Whether to skip SCT verification
+	ignoreSCT bool
+	// Whether to skip transparency log verification
+	ignoreTlog bool
 }
 
 // GetRekorClient returns a configured Rekor client
@@ -67,12 +75,40 @@ func NewSignatureVerifier(ctx context.Context, roots *x509.CertPool) (*Signature
 		return nil, fmt.Errorf("getting rekor client: %w", err)
 	}
 
+	// Get Rekor public keys
+	rekorPubs, err := cosign.GetRekorPubs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting Rekor public keys: %w", err)
+	}
+
+	// Get CT Log public keys
+	ctLogPubs, err := cosign.GetCTLogPubs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting CT log public keys: %w", err)
+	}
+
 	return &SignatureVerifier{
 		rootCerts:         roots,
 		intermediateCerts: intermediates,
 		identities:        []cosign.Identity{},
 		rekorClient:       rekorClient,
+		rekorPubKeys:      rekorPubs,
+		ctLogPubKeys:      ctLogPubs,
+		ignoreSCT:         false, // Default to requiring SCT
+		ignoreTlog:        false, // Default to requiring tlog
 	}, nil
+}
+
+// WithIgnoreSCT configures whether to skip SCT verification
+func (sv *SignatureVerifier) WithIgnoreSCT(ignore bool) *SignatureVerifier {
+	sv.ignoreSCT = ignore
+	return sv
+}
+
+// WithIgnoreTlog configures whether to skip transparency log verification
+func (sv *SignatureVerifier) WithIgnoreTlog(ignore bool) *SignatureVerifier {
+	sv.ignoreTlog = ignore
+	return sv
 }
 
 // WithIdentity adds an identity requirement
@@ -106,10 +142,14 @@ func (sv *SignatureVerifier) verifyRemoteImage(ctx context.Context, imageRef str
 		RegistryClientOpts: []ociremote.Option{
 			ociremote.WithRemoteOptions(remoteOptions...),
 		},
-		RootCerts:   sv.rootCerts,
-		Identities:  sv.identities,
-		RekorClient: sv.rekorClient,
-		IgnoreSCT:   true, // Allow keyless signatures without SCT
+		RootCerts:         sv.rootCerts,
+		IntermediateCerts: sv.intermediateCerts,
+		Identities:        sv.identities,
+		RekorClient:       sv.rekorClient,
+		RekorPubKeys:      sv.rekorPubKeys,
+		CTLogPubKeys:      sv.ctLogPubKeys,
+		IgnoreSCT:         sv.ignoreSCT,  // Use configured SCT verification setting
+		IgnoreTlog:        sv.ignoreTlog, // Use configured transparency log verification setting
 	}
 
 	// Perform verification
@@ -158,10 +198,14 @@ func (sv *SignatureVerifier) VerifyLocalImage(ctx context.Context, imagePath str
 
 	// Create check options for verification
 	checkOpts := &cosign.CheckOpts{
-		RootCerts:   sv.rootCerts,
-		Identities:  sv.identities,
-		RekorClient: sv.rekorClient,
-		IgnoreSCT:   true, // Allow keyless signatures without SCT
+		RootCerts:         sv.rootCerts,
+		IntermediateCerts: sv.intermediateCerts,
+		Identities:        sv.identities,
+		RekorClient:       sv.rekorClient,
+		RekorPubKeys:      sv.rekorPubKeys,
+		CTLogPubKeys:      sv.ctLogPubKeys,
+		IgnoreSCT:         sv.ignoreSCT,  // Use configured SCT verification setting
+		IgnoreTlog:        sv.ignoreTlog, // Use configured transparency log verification setting
 	}
 
 	// Perform verification on local file
@@ -188,18 +232,15 @@ func (sv *SignatureVerifier) VerifyLocalBlob(ctx context.Context, filePath, sigP
 	}
 
 	// Create check options for verification
-	pubkeys, err := cosign.GetRekorPubs(ctx)
-	if err != nil {
-		return fmt.Errorf("getting Rekor public keys: %w", err)
-	}
 	checkOpts := &cosign.CheckOpts{
 		RootCerts:         sv.rootCerts,
 		IntermediateCerts: sv.intermediateCerts,
 		Identities:        sv.identities,
 		RekorClient:       sv.rekorClient,
-		RekorPubKeys:      pubkeys,
-		//IgnoreSCT:         true,  // Allow keyless signatures without SCT
-		IgnoreTlog: false, // Ignore transparency log for local verification
+		RekorPubKeys:      sv.rekorPubKeys,
+		CTLogPubKeys:      sv.ctLogPubKeys,
+		IgnoreSCT:         sv.ignoreSCT,  // Use configured SCT verification setting
+		IgnoreTlog:        sv.ignoreTlog, // Use configured transparency log verification setting
 	}
 
 	// Try to parse as bundle
@@ -299,10 +340,14 @@ func (sv *SignatureVerifier) VerifyBlobFromHTTP(ctx context.Context, fileURL, si
 
 	// Create check options for verification
 	checkOpts := &cosign.CheckOpts{
-		RootCerts:   sv.rootCerts,
-		Identities:  sv.identities,
-		RekorClient: sv.rekorClient,
-		IgnoreSCT:   true, // Allow keyless signatures without SCT
+		RootCerts:         sv.rootCerts,
+		IntermediateCerts: sv.intermediateCerts,
+		Identities:        sv.identities,
+		RekorClient:       sv.rekorClient,
+		RekorPubKeys:      sv.rekorPubKeys,
+		CTLogPubKeys:      sv.ctLogPubKeys,
+		IgnoreSCT:         sv.ignoreSCT,  // Use configured SCT verification setting
+		IgnoreTlog:        sv.ignoreTlog, // Use configured transparency log verification setting
 	}
 
 	// Verify the signature using VerifyBlobSignature
@@ -347,10 +392,14 @@ func (sv *SignatureVerifier) VerifyOCIChartDigestFromHTTPSignature(ctx context.C
 
 	// Create check options for verification
 	checkOpts := &cosign.CheckOpts{
-		RootCerts:   sv.rootCerts,
-		Identities:  sv.identities,
-		RekorClient: sv.rekorClient,
-		IgnoreSCT:   true, // Allow keyless signatures without SCT
+		RootCerts:         sv.rootCerts,
+		IntermediateCerts: sv.intermediateCerts,
+		Identities:        sv.identities,
+		RekorClient:       sv.rekorClient,
+		RekorPubKeys:      sv.rekorPubKeys,
+		CTLogPubKeys:      sv.ctLogPubKeys,
+		IgnoreSCT:         sv.ignoreSCT,  // Use configured SCT verification setting
+		IgnoreTlog:        sv.ignoreTlog, // Use configured transparency log verification setting
 	}
 
 	// Verify the signature using VerifyBlobSignature

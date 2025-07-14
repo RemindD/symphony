@@ -523,6 +523,9 @@ func (i *ScriptProvider) verifyScript(ctx context.Context, scriptPath string, si
 	sigPath := signatureURL
 	if strings.HasPrefix(signatureURL, "http") {
 		sigFolder := filepath.Join(i.Config.StagingFolder, uuid.New().String())
+		if err := os.MkdirAll(sigFolder, 0755); err != nil {
+			return fmt.Errorf("failed to create signature folder: %w", err)
+		}
 		sigName := filepath.Base(signatureURL)
 		err = downloadFile(strings.TrimSuffix(signatureURL, sigName), sigName, sigFolder)
 		if err != nil {
