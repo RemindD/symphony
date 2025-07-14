@@ -248,7 +248,7 @@ func TestInitWithInvalidSignatures(t *testing.T) {
 		"scriptEngine":          "bash",
 		"applyScriptSignature":  "https://test.example.com/signatures/mock-apply.sh.sig",
 		"removeScriptSignature": "https://test.example.com/signatures/mock-remove.sh.sig",
-		"getScriptSignature":    "https:script//test.example.com/signatures/mock-get.sh.sig",
+		"getScriptSignature":    "https://test.example.com/signatures/mock-get.sh.sig",
 		"signingOIDCIssuer":     "https://issuer.example.com",
 		"signingOIDCIdentity":   "test@example.com",
 	})
@@ -268,7 +268,7 @@ func TestScriptVerification(t *testing.T) {
 		"applyScript":           "mock-apply.sh",
 		"removeScript":          "mock-remove.sh",
 		"getScript":             "mock-get.sh",
-		"applyScriptSignature":  scriptFolder + "/mock-apply.sh.bundle",
+		"applyScriptSignature":  "", //scriptFolder + "/mock-apply.sh.bundle",
 		"removeScriptSignature": scriptFolder + "/mock-remove.sh.bundle",
 		"getScriptSignature":    scriptFolder + "/mock-get.sh.bundle",
 		"signingOIDCIssuer":     "https://github.com/login/oauth",
@@ -289,15 +289,19 @@ func TestScriptVerificationLocal(t *testing.T) {
 		"applyScript":           "mock-apply.sh",
 		"removeScript":          "mock-remove.sh",
 		"getScript":             "mock-get.sh",
-		"applyScriptSignature":  "",
-		"removeScriptSignature": "",
+		"applyScriptSignature":  scriptFolder + "/mock-apply.sh.bundle",
+		"removeScriptSignature": scriptFolder + "/mock-remove.sh.bundle",
 		"getScriptSignature":    scriptFolder + "/mock-get.sh.bundle",
 		"signingOIDCIssuer":     "https://github.com/login/oauth",
 		"signingOIDCIdentity":   "xdlisjtu@gmail.com",
 	})
 	require.Nil(t, err)
 	ctx := context.Background()
+	err = provider.verifyScript(ctx, "/home/xingdong/symphony/api/pkg/apis/v1alpha1/providers/target/script/mock-apply.sh", provider.Config.ApplyScriptSignature)
+	require.Nil(t, err)
 	err = provider.verifyScript(ctx, "/home/xingdong/symphony/api/pkg/apis/v1alpha1/providers/target/script/mock-get.sh", provider.Config.GetScriptSignature)
+	require.Nil(t, err)
+	err = provider.verifyScript(ctx, "/home/xingdong/symphony/api/pkg/apis/v1alpha1/providers/target/script/mock-remove.sh", provider.Config.RemoveScriptSignature)
 	require.Nil(t, err)
 }
 
