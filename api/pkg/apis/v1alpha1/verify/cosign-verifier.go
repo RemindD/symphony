@@ -5,7 +5,6 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,13 +28,6 @@ import (
 const (
 	RekorURL = "https://rekor.sigstore.dev"
 )
-
-// SignatureBundle represents a Cosign signature bundle including certificate and Rekor data
-type SignatureBundle struct {
-	Base64Signature string          `json:"base64Signature"`
-	Cert            string          `json:"cert"`
-	RekorBundle     json.RawMessage `json:"rekorBundle"`
-}
 
 // SignatureVerifier provides methods to verify signatures using Cosign
 type SignatureVerifier struct {
@@ -196,25 +188,34 @@ func (sv *SignatureVerifier) VerifyLocalBlob(ctx context.Context, filePath, sigP
 	}
 
 	// Create check options for verification
+	pubkeys, err := cosign.GetRekorPubs(ctx)
+	if err != nil {
+		return fmt.Errorf("getting Rekor public keys: %w", err)
+	}
 	checkOpts := &cosign.CheckOpts{
 		RootCerts:         sv.rootCerts,
 		IntermediateCerts: sv.intermediateCerts,
 		Identities:        sv.identities,
 		RekorClient:       sv.rekorClient,
-		IgnoreSCT:         true, // Allow keyless signatures without SCT
-		IgnoreTlog:        true, // Ignore transparency log for local verification
+		RekorPubKeys:      pubkeys,
+		//IgnoreSCT:         true,  // Allow keyless signatures without SCT
+		IgnoreTlog: false, // Ignore transparency log for local verification
 	}
 
 	// Try to parse as bundle
-	var bundle SignatureBundle
-	if err := json.Unmarshal(signatureBytes, &bundle); err == nil {
+	if b, err := cosign.FetchLocalSignedPayloadFromPath(sigPath); err == nil {
 		// Parse rekor bundle
 		opts := make([]static.Option, 0)
-		b, err := cosign.FetchLocalSignedPayloadFromPath(sigPath)
 		if err != nil {
 			return err
 		}
-		sig := base64.StdEncoding.EncodeToString([]byte(b.Base64Signature))
+		targetSig := []byte(b.Base64Signature)
+		var sig string
+		if isb64(targetSig) {
+			sig = string(targetSig)
+		} else {
+			sig = base64.StdEncoding.EncodeToString(targetSig)
+		}
 
 		if b.Cert == "" {
 			return fmt.Errorf("no certificate found in bundle")
