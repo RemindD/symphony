@@ -5,12 +5,13 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+
+	"bytes"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -30,8 +31,17 @@ const (
 	RekorURL = "https://rekor.sigstore.dev"
 )
 
+type VerificationType int
+
+const (
+	KeylessVerification VerificationType = iota
+	CertificateVerification
+)
+
 // SignatureVerifier provides methods to verify signatures using Cosign
 type SignatureVerifier struct {
+	// Verification type (keyless or certificate-based)
+	verifyType VerificationType
 	// Root certificates for verification
 	rootCerts *x509.CertPool
 	// Intermediate certificates for verification
@@ -51,16 +61,118 @@ type SignatureVerifier struct {
 }
 
 func (sv *SignatureVerifier) convertToCheckOpts() *cosign.CheckOpts {
-	return &cosign.CheckOpts{
-		RootCerts:         sv.rootCerts,
-		IntermediateCerts: sv.intermediateCerts,
-		Identities:        sv.identities,
-		RekorClient:       sv.rekorClient,
-		RekorPubKeys:      sv.rekorPubKeys,
-		CTLogPubKeys:      sv.ctLogPubKeys,
-		IgnoreSCT:         sv.ignoreSCT,
-		IgnoreTlog:        sv.ignoreTlog,
+	switch sv.verifyType {
+	case CertificateVerification:
+		return &cosign.CheckOpts{
+			RootCerts:         sv.rootCerts,
+			IntermediateCerts: sv.intermediateCerts,
+			IgnoreTlog:        true,
+			IgnoreSCT:         true,
+		}
+	default: // KeylessVerification
+		return &cosign.CheckOpts{
+			RootCerts:         sv.rootCerts,
+			IntermediateCerts: sv.intermediateCerts,
+			Identities:        sv.identities,
+			RekorClient:       sv.rekorClient,
+			RekorPubKeys:      sv.rekorPubKeys,
+			CTLogPubKeys:      sv.ctLogPubKeys,
+			IgnoreSCT:         false,
+			IgnoreTlog:        false,
+		}
 	}
+}
+
+// WithCertificateVerification configures the verifier for certificate-based verification
+// certPEM and chainPEM are PEM encoded certificate and certificate chain
+func (sv *SignatureVerifier) WithCertificateVerification(certPEM, chainPEM string) (*SignatureVerifier, error) {
+	sv.verifyType = CertificateVerification
+
+	// Parse the certificate
+	certs, err := cryptoutils.UnmarshalCertificatesFromPEM([]byte(certPEM))
+	if err != nil {
+		return nil, fmt.Errorf("parsing certificate: %w", err)
+	}
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("no certificates found in certPEM")
+	}
+
+	// Parse the certificate chain
+	chainCerts, err := cryptoutils.UnmarshalCertificatesFromPEM([]byte(chainPEM))
+	if err != nil {
+		return nil, fmt.Errorf("parsing certificate chain: %w", err)
+	}
+
+	// Set up certificate pools
+	sv.rootCerts = x509.NewCertPool()
+	sv.intermediateCerts = x509.NewCertPool()
+
+	// Add chain certificates to appropriate pools
+	for _, cert := range chainCerts {
+		if cert.IsCA {
+			if bytes.Equal(cert.RawSubject, cert.RawIssuer) {
+				// Self-signed certificate goes to root pool
+				sv.rootCerts.AddCert(cert)
+			} else {
+				// Intermediate certificate
+				sv.intermediateCerts.AddCert(cert)
+			}
+		}
+	}
+
+	return sv, nil
+}
+
+// WithKeylessVerification configures the verifier for keyless verification using Fulcio and Rekor
+func (sv *SignatureVerifier) WithKeylessVerification() (*SignatureVerifier, error) {
+	sv.verifyType = KeylessVerification
+
+	// Get Fulcio root certificates if not already set
+	if sv.rootCerts == nil {
+		roots, err := fulcioroots.Get()
+		if err != nil {
+			return nil, fmt.Errorf("getting Fulcio roots: %w", err)
+		}
+		sv.rootCerts = roots
+	}
+
+	// Get Fulcio intermediate certificates if not already set
+	if sv.intermediateCerts == nil {
+		intermediates, err := fulcioroots.GetIntermediates()
+		if err != nil {
+			return nil, fmt.Errorf("getting Fulcio intermediates: %w", err)
+		}
+		sv.intermediateCerts = intermediates
+	}
+
+	// Initialize rekor client if not already set
+	if sv.rekorClient == nil {
+		rekorClient, err := GetRekorClient()
+		if err != nil {
+			return nil, fmt.Errorf("getting rekor client: %w", err)
+		}
+		sv.rekorClient = rekorClient
+	}
+
+	// Get Rekor public keys if not already set
+	if sv.rekorPubKeys == nil {
+		rekorPubs, err := cosign.GetRekorPubs(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("getting Rekor public keys: %w", err)
+		}
+		sv.rekorPubKeys = rekorPubs
+	}
+
+	// Get CT Log public keys if not already set
+	if sv.ctLogPubKeys == nil {
+		ctLogPubs, err := cosign.GetCTLogPubs(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("getting CT log public keys: %w", err)
+		}
+		sv.ctLogPubKeys = ctLogPubs
+	}
+
+	return sv, nil
 }
 
 // GetRekorClient returns a configured Rekor client
@@ -193,24 +305,6 @@ func (sv *SignatureVerifier) VerifyWithKeychain(ctx context.Context, imageRef st
 	return sv.verifyRemoteImage(ctx, imageRef, remoteOptions)
 }
 
-// VerifyLocalImage verifies a signature using a local image
-func (sv *SignatureVerifier) VerifyLocalImage(ctx context.Context, imagePath string) ([]oci.Signature, bool, error) {
-	// Check if file exists
-	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-		return nil, false, fmt.Errorf("local image not found: %s", imagePath)
-	}
-
-	checkOpts := sv.convertToCheckOpts()
-
-	// Perform verification on local file
-	sigs, bundleVerified, err := cosign.VerifyLocalImageSignatures(ctx, imagePath, checkOpts)
-	if err != nil {
-		return nil, false, fmt.Errorf("verifying local image: %w", err)
-	}
-
-	return sigs, bundleVerified, nil
-}
-
 // VerifyLocalBlob verifies a signature for a local file and signature
 // verifyBlobWithBundle verifies a blob using a bundle
 func (sv *SignatureVerifier) verifyBlobWithBundle(ctx context.Context, fileContent []byte, b *cosign.LocalSignedPayload) error {
@@ -275,28 +369,6 @@ func (sv *SignatureVerifier) VerifyLocalBlob(ctx context.Context, filePath, bund
 	b, err := cosign.FetchLocalSignedPayloadFromPath(bundlePath)
 	if err != nil {
 		return fmt.Errorf("failed to parse signature as bundle: %w", err)
-	}
-
-	return sv.verifyBlobWithBundle(ctx, fileContent, b)
-}
-
-// VerifyBlobFromHTTP downloads a file and its signature from an HTTP server and verifies it
-func (sv *SignatureVerifier) VerifyBlobFromHTTP(ctx context.Context, fileURL, bundleURL string) error {
-	// Download the file content
-	fileContent, err := downloadContent(ctx, fileURL)
-	if err != nil {
-		return fmt.Errorf("downloading file content: %w", err)
-	}
-
-	// Download the signature
-	signatureBytes, err := downloadContent(ctx, bundleURL)
-	if err != nil {
-		return fmt.Errorf("downloading signature: %w", err)
-	}
-
-	var b *cosign.LocalSignedPayload
-	if err := json.Unmarshal(signatureBytes, &b); err != nil {
-		return fmt.Errorf("signature URL is not a valid bundle file: %w", err)
 	}
 
 	return sv.verifyBlobWithBundle(ctx, fileContent, b)

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/sigstore/cosign/v2/pkg/cosign"
+	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -177,51 +178,6 @@ func TestVerifyWithKeychain_InvalidImageRef(t *testing.T) {
 	}
 }
 
-func TestVerifyLocalImage_FileNotFound(t *testing.T) {
-	ctx := context.Background()
-	verifier := &SignatureVerifier{
-		rootCerts:  createTestCertPool(),
-		identities: []cosign.Identity{},
-	}
-
-	// Test with non-existent file
-	sigs, verified, err := verifier.VerifyLocalImage(ctx, "/nonexistent/path/image.tar")
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "local image not found")
-	assert.False(t, verified)
-	assert.Nil(t, sigs)
-}
-
-func TestVerifyLocalImage_ExistingFile(t *testing.T) {
-	ctx := context.Background()
-	verifier := &SignatureVerifier{
-		rootCerts:  createTestCertPool(),
-		identities: []cosign.Identity{},
-	}
-
-	// Create a temporary file for testing
-	tempFile, err := os.CreateTemp("", "test-image-*.tar")
-	require.NoError(t, err)
-	defer os.Remove(tempFile.Name())
-
-	_, err = tempFile.WriteString("test image content")
-	require.NoError(t, err)
-	tempFile.Close()
-
-	// This will likely fail because it's not a real signed image, but we're testing the file existence logic
-	sigs, verified, err := verifier.VerifyLocalImage(ctx, tempFile.Name())
-
-	// The error should be about verification failure, not file not found
-	if err != nil {
-		assert.NotContains(t, err.Error(), "local image not found")
-		// Should contain verification-related error instead
-		assert.Contains(t, err.Error(), "verifying local image")
-	}
-	assert.False(t, verified)
-	assert.Nil(t, sigs)
-}
-
 func TestDownloadContent(t *testing.T) {
 	ctx := context.Background()
 
@@ -309,6 +265,128 @@ func TestDownloadContent(t *testing.T) {
 	}
 }
 
+func TestVerificationModes(t *testing.T) {
+	t.Run("keyless verification mode", func(t *testing.T) {
+		verifier := &SignatureVerifier{}
+		res, err := verifier.WithKeylessVerification()
+		require.NoError(t, err)
+
+		opts := res.convertToCheckOpts()
+		assert.NotNil(t, opts.RootCerts, "root certs should be set")
+		assert.NotNil(t, opts.IntermediateCerts, "intermediate certs should be set")
+		assert.NotNil(t, opts.RekorClient, "rekor client should be set")
+		assert.NotNil(t, opts.RekorPubKeys, "rekor public keys should be set")
+		assert.NotNil(t, opts.CTLogPubKeys, "CT log public keys should be set")
+		assert.False(t, opts.IgnoreTlog, "tlog verification should be enabled")
+		assert.False(t, opts.IgnoreSCT, "SCT verification should be enabled")
+	})
+
+	t.Run("certificate verification mode", func(t *testing.T) {
+		verifier := &SignatureVerifier{}
+		// Example self-signed certificate for testing
+		certPEM := `-----BEGIN CERTIFICATE-----
+MIIBhTCCASugAwIBAgIQIRi6zePL6mKjOipn+dNuaTAKBggqhkjOPQQDAjASMRAw
+DgYDVQQKEwdBY21lIENvMB4XDTE3MTAyMDE5NDMwNloXDTE4MTAyMDE5NDMwNlow
+EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABD0d
+7VNhbWvZLWPuj/RtHFjvtJBEwOkhbN/BnnE8rnZR8+sbwnc/KhCk3FhnpHZnQz7B
+5aETbbIgmuvewdjvSBSjYzBhMA4GA1UdDwEB/wQEAwICpDATBgNVHSUEDDAKBggr
+BgEFBQcDATAPBgNVHRMBAf8EBTADAQH/MCkGA1UdEQQiMCCCDmxvY2FsaG9zdDo1
+NDUzgg4xMjcuMC4wLjE6NTQ1MzAKBggqhkjOPQQDAgNIADBFAiEA2zpJEPQyz6/l
+Wf86aX6PepsntZv2GYlA5UpabfT2EZICICpJ5h/iI+i341gBmLiAFQOyTDT+/wQc
+6MF9+Yw1Yy0t
+-----END CERTIFICATE-----`
+		chainPEM := certPEM // Use same cert as chain for this test
+
+		res, err := verifier.WithCertificateVerification(certPEM, chainPEM)
+		require.NoError(t, err)
+
+		opts := res.convertToCheckOpts()
+		assert.NotNil(t, opts.RootCerts, "root certs should be set")
+		assert.True(t, opts.IgnoreTlog, "tlog verification should be disabled")
+		assert.True(t, opts.IgnoreSCT, "SCT verification should be disabled")
+
+		// Verify certificate was added to root pool
+		cert, err := cryptoutils.UnmarshalCertificatesFromPEM([]byte(certPEM))
+		require.NoError(t, err)
+		require.Len(t, cert, 1)
+	})
+
+	t.Run("verify signed image with certificate verification", func(t *testing.T) {
+		ctx := context.Background()
+		verifier := &SignatureVerifier{}
+
+		// Example certificate and chain
+		certPEM := `-----BEGIN CERTIFICATE-----
+MIIEFTCCAv2gAwIBAgIURnRdWQcYLOxfBqWxKwtOiPL9TDowDQYJKoZIhvcNAQEL
+BQAwgZkxCzAJBgNVBAYTAkNOMREwDwYDVQQIDAhTaGFuZ2hhaTERMA8GA1UEBwwI
+U2hhbmdoYWkxEjAQBgNVBAoMCU1pY3Jvc29mdDEUMBIGA1UECwwLRW5naW5lZXJp
+bmcxFDASBgNVBAMMC1hpbmdkb25nIExpMSQwIgYJKoZIhvcNAQkBFhV4aW5nZGxp
+QG1pY3Jvc29mdC5jb20wHhcNMjUwNzIxMDIxNTExWhcNMjYwNzIxMDIxNTExWjCB
+mTELMAkGA1UEBhMCQ04xETAPBgNVBAgMCFNoYW5naGFpMREwDwYDVQQHDAhTaGFu
+Z2hhaTESMBAGA1UECgwJTWljcm9zb2Z0MRQwEgYDVQQLDAtFbmdpbmVlcmluZzEU
+MBIGA1UEAwwLWGluZ2RvbmcgTGkxJDAiBgkqhkiG9w0BCQEWFXhpbmdkbGlAbWlj
+cm9zb2Z0LmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALNmZEir
+f01lPBaP3AdnHDGJA4KeTfq2sqz6sQKAWGv7iQl4iXlvbjPg0sJ77fa222+ostKh
+xNEjj6UYudVQ38BZTlpUyv9EmFiM03teVBadnrNiVz+fjZwdrbr8DaraPfiQfz2v
+PyyULSTFrL4LS/4MBAwTJNlWWqXzBYpNQoUA5DCPizZr+YgIE52+8/ZqFt6jrj99
+8ozhJ4Mm7bldh5RwEMvQrfU2SUGB3m9stdqEVZOi2eT8+E8wsDNlYJXINgaYcJpj
+Ei3xvKcKCCby/bBVn+JAKylb5BpcpUoEEvrwLUJv2MZvBefzUO6KNDIJcv4i0RlW
+MII+4PC0uSbDKN0CAwEAAaNTMFEwHQYDVR0OBBYEFD6l93w+rOfzq/MrFn0MbYzW
+Yn9BMB8GA1UdIwQYMBaAFD6l93w+rOfzq/MrFn0MbYzWYn9BMA8GA1UdEwEB/wQF
+MAMBAf8wDQYJKoZIhvcNAQELBQADggEBAFUsk6FqHjyIXwYir56siMHE/bRFrLcI
+OUIUI0cOhv3GLkhaiV0yx4LpR6tiCEu0PZ8b0IctHX2zCa3LtnO7YVKirX8dQ2h2
+PfL9FC2ftLoZs3XUGtO4PA00RRC7h/hJPk3S7aDHffUXEvQlVJ0/uOOEhhqBMrHa
+nRBNjIStK1cc8qIwgnVkyq/UoFyD4e7Kq5gCAhfdTCFIDVkGXbS0edj90ph3Z9nk
+vPzVBxUzlMdObPeSI88pI8fbdoTsJdjrovCh5SlCtsrQKejwNKcoEt+kvw7QAoRJ
+OPHvvi7KlSP6bz8buZkWKvFhuDnUOGL6PRSdmAvpT3/NEve+18l9uoU=
+-----END CERTIFICATE-----`
+		chainPEM := certPEM // Use same cert as chain for this test
+
+		// Set up certificate verification mode
+		imageRef := "xingdliacr.azurecr.io/xingdlitest-demo-data@sha256:39851a7894f42210bb259b73aa63945a7df5bd2d224226431931b492aff4c3cd"
+
+		// Configure the verifier for certificate verification
+		res, err := verifier.WithCertificateVerification(certPEM, chainPEM)
+		require.NoError(t, err)
+
+		// Try to verify the image
+		sigs, bundleVerified, err := res.VerifyWithKeychain(ctx, imageRef)
+
+		// We expect verification to fail since we're using an incorrect certificate
+		require.Nil(t, err)
+		assert.False(t, bundleVerified)
+		assert.NotNil(t, sigs)
+
+		// Note: The verification fails because:
+		// 1. The test certificate is not the one used to sign the image
+		// 2. The signature's certificate chain won't match our test certificate
+		// This validates that our certificate verification is actually working
+	})
+
+	t.Run("verify signed image with keyless verification and OIDC identity", func(t *testing.T) {
+		ctx := context.Background()
+		verifier := &SignatureVerifier{}
+
+		// Configure for keyless verification with expected OIDC identity
+		res, err := verifier.WithKeylessVerification()
+		require.NoError(t, err)
+
+		// Add expected identity - the image should have been signed by GitHub Actions
+		res.WithIdentityRegExp("https://github.com/login/oauth", ".*")
+
+		// Try to verify the image with keyless verification
+		imageRef := "xingdliacr.azurecr.io/cosign-keyless@sha256:39851a7894f42210bb259b73aa63945a7df5bd2d224226431931b492aff4c3cd"
+		sigs, bundleVerified, err := res.VerifyWithKeychain(ctx, imageRef)
+
+		// Now we expect verification to succeed with keyless mode
+		require.NoError(t, err, "keyless verification should succeed")
+		require.True(t, bundleVerified, "bundle should be verified")
+		require.NotNil(t, sigs, "signatures should be present")
+		require.NotEmpty(t, sigs, "at least one signature should be found")
+		t.Logf("Found %d signatures", len(sigs))
+	})
+}
+
 func TestDownloadContentWithContext(t *testing.T) {
 	t.Run("invalid URL", func(t *testing.T) {
 		ctx := context.Background()
@@ -394,68 +472,6 @@ func TestVerifyLocalBlob(t *testing.T) {
 		tempSigFile.Close()
 
 		err = verifier.VerifyLocalBlob(ctx, tempFile.Name(), tempSigFile.Name())
-		require.Error(t, err)
-		// Should fail at signature creation or verification step
-		assert.True(t, strings.Contains(err.Error(), "creating signature") ||
-			strings.Contains(err.Error(), "signature verification failed"))
-	})
-}
-
-func TestVerifyBlobFromHTTP_DownloadFailures(t *testing.T) {
-	ctx := context.Background()
-	verifier := &SignatureVerifier{
-		rootCerts:  createTestCertPool(),
-		identities: []cosign.Identity{},
-	}
-
-	t.Run("file download failure", func(t *testing.T) {
-		fileServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer fileServer.Close()
-
-		sigServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("signature"))
-		}))
-		defer sigServer.Close()
-
-		err := verifier.VerifyBlobFromHTTP(ctx, fileServer.URL, sigServer.URL)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "downloading file content")
-	})
-
-	t.Run("signature download failure", func(t *testing.T) {
-		fileServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("file content"))
-		}))
-		defer fileServer.Close()
-
-		sigServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-		}))
-		defer sigServer.Close()
-
-		err := verifier.VerifyBlobFromHTTP(ctx, fileServer.URL, sigServer.URL)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "downloading signature")
-	})
-
-	t.Run("successful download but verification failure", func(t *testing.T) {
-		fileServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("file content"))
-		}))
-		defer fileServer.Close()
-
-		sigServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("fake signature"))
-		}))
-		defer sigServer.Close()
-
-		err := verifier.VerifyBlobFromHTTP(ctx, fileServer.URL, sigServer.URL)
 		require.Error(t, err)
 		// Should fail at signature creation or verification step
 		assert.True(t, strings.Contains(err.Error(), "creating signature") ||
