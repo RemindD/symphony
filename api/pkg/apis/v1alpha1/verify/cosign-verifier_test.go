@@ -22,80 +22,6 @@ func createTestCertPool() *x509.CertPool {
 	return pool
 }
 
-func TestNewSignatureVerifier(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("successful initialization with provided roots", func(t *testing.T) {
-		testRoots := createTestCertPool()
-		verifier, err := NewSignatureVerifier(ctx, testRoots)
-
-		require.NoError(t, err)
-		require.NotNil(t, verifier)
-		assert.NotNil(t, verifier.rootCerts)
-		assert.Empty(t, verifier.identities)
-		assert.Equal(t, testRoots, verifier.rootCerts)
-	})
-
-	t.Run("successful initialization with nil roots", func(t *testing.T) {
-		verifier, err := NewSignatureVerifier(ctx, nil)
-
-		// This might fail if Fulcio roots can't be fetched, but that's expected in test environment
-		if err != nil {
-			// If we can't get Fulcio roots, that's okay for testing
-			assert.Contains(t, err.Error(), "getting Fulcio roots")
-			return
-		}
-
-		require.NotNil(t, verifier)
-		assert.NotNil(t, verifier.rootCerts)
-		assert.Empty(t, verifier.identities)
-	})
-}
-
-func TestWithIdentity(t *testing.T) {
-	verifier := &SignatureVerifier{
-		rootCerts:  createTestCertPool(),
-		identities: []cosign.Identity{},
-	}
-
-	// Test adding single identity
-	result := verifier.WithIdentity("issuer1", "subject1")
-	assert.Same(t, verifier, result, "Should return the same verifier instance")
-	require.Len(t, verifier.identities, 1)
-	assert.Equal(t, "issuer1", verifier.identities[0].Issuer)
-	assert.Equal(t, "subject1", verifier.identities[0].Subject)
-	assert.Empty(t, verifier.identities[0].IssuerRegExp)
-	assert.Empty(t, verifier.identities[0].SubjectRegExp)
-
-	// Test adding second identity
-	verifier.WithIdentity("issuer2", "subject2")
-	require.Len(t, verifier.identities, 2)
-	assert.Equal(t, "issuer2", verifier.identities[1].Issuer)
-	assert.Equal(t, "subject2", verifier.identities[1].Subject)
-}
-
-func TestWithIdentityRegExp(t *testing.T) {
-	verifier := &SignatureVerifier{
-		rootCerts:  createTestCertPool(),
-		identities: []cosign.Identity{},
-	}
-
-	// Test adding regex identity
-	result := verifier.WithIdentityRegExp("issuer-.*", "subject-.*")
-	assert.Same(t, verifier, result, "Should return the same verifier instance")
-	require.Len(t, verifier.identities, 1)
-	assert.Equal(t, "issuer-.*", verifier.identities[0].IssuerRegExp)
-	assert.Equal(t, "subject-.*", verifier.identities[0].SubjectRegExp)
-	assert.Empty(t, verifier.identities[0].Issuer)
-	assert.Empty(t, verifier.identities[0].Subject)
-
-	// Test adding multiple regex identities
-	verifier.WithIdentityRegExp("another-issuer-.*", "another-subject-.*")
-	require.Len(t, verifier.identities, 2)
-	assert.Equal(t, "another-issuer-.*", verifier.identities[1].IssuerRegExp)
-	assert.Equal(t, "another-subject-.*", verifier.identities[1].SubjectRegExp)
-}
-
 func TestVerifyWithBasicAuth_InvalidImageRef(t *testing.T) {
 	ctx := context.Background()
 	verifier := &SignatureVerifier{
@@ -268,7 +194,7 @@ func TestDownloadContent(t *testing.T) {
 func TestVerificationModes(t *testing.T) {
 	t.Run("keyless verification mode", func(t *testing.T) {
 		verifier := &SignatureVerifier{}
-		res, err := verifier.WithKeylessVerification()
+		res, err := verifier.WithKeylessVerification("issuer-.*", "subject-.*")
 		require.NoError(t, err)
 
 		opts := res.convertToCheckOpts()
@@ -279,6 +205,9 @@ func TestVerificationModes(t *testing.T) {
 		assert.NotNil(t, opts.CTLogPubKeys, "CT log public keys should be set")
 		assert.False(t, opts.IgnoreTlog, "tlog verification should be enabled")
 		assert.False(t, opts.IgnoreSCT, "SCT verification should be enabled")
+		assert.Len(t, opts.Identities, 1, "should have one identity configured")
+		assert.Equal(t, "issuer-.*", opts.Identities[0].IssuerRegExp, "identity issuer regexp should match")
+		assert.Equal(t, "subject-.*", opts.Identities[0].SubjectRegExp, "identity subject regexp should match")
 	})
 
 	t.Run("certificate verification mode", func(t *testing.T) {
@@ -368,11 +297,8 @@ OPHvvi7KlSP6bz8buZkWKvFhuDnUOGL6PRSdmAvpT3/NEve+18l9uoU=
 		verifier := &SignatureVerifier{}
 
 		// Configure for keyless verification with expected OIDC identity
-		res, err := verifier.WithKeylessVerification()
+		res, err := verifier.WithKeylessVerification("https://github.com/login/oauth", ".*")
 		require.NoError(t, err)
-
-		// Add expected identity - the image should have been signed by GitHub Actions
-		res.WithIdentityRegExp("https://github.com/login/oauth", ".*")
 
 		// Try to verify the image with keyless verification
 		imageRef := "xingdliacr.azurecr.io/cosign-keyless@sha256:39851a7894f42210bb259b73aa63945a7df5bd2d224226431931b492aff4c3cd"
@@ -478,74 +404,6 @@ func TestVerifyLocalBlob(t *testing.T) {
 			strings.Contains(err.Error(), "signature verification failed"))
 	})
 }
-
-// Integration test that tests the complete workflow
-func TestSignatureVerifierIntegration(t *testing.T) {
-	ctx := context.Background()
-
-	// Create verifier with custom certificate pool
-	testRoots := createTestCertPool()
-	verifier, err := NewSignatureVerifier(ctx, testRoots)
-	require.NoError(t, err)
-
-	// Test method chaining
-	result := verifier.
-		WithIdentity("test-issuer", "test-subject").
-		WithIdentityRegExp(".*@example.com", ".*")
-
-	// Verify method chaining returns same instance
-	assert.Same(t, verifier, result)
-
-	// Verify we have the expected identities
-	assert.Len(t, verifier.identities, 2)
-
-	// First identity (exact match)
-	assert.Equal(t, "test-issuer", verifier.identities[0].Issuer)
-	assert.Equal(t, "test-subject", verifier.identities[0].Subject)
-	assert.Empty(t, verifier.identities[0].IssuerRegExp)
-	assert.Empty(t, verifier.identities[0].SubjectRegExp)
-
-	// Second identity (regex match)
-	assert.Empty(t, verifier.identities[1].Issuer)
-	assert.Empty(t, verifier.identities[1].Subject)
-	assert.Equal(t, ".*@example.com", verifier.identities[1].IssuerRegExp)
-	assert.Equal(t, ".*", verifier.identities[1].SubjectRegExp)
-
-	// Verify rootCerts is set correctly
-	assert.Equal(t, testRoots, verifier.rootCerts)
-}
-
-func TestSignatureVerifierIdentityTypes(t *testing.T) {
-	verifier := &SignatureVerifier{
-		rootCerts:  createTestCertPool(),
-		identities: []cosign.Identity{},
-	}
-
-	// Add various types of identities
-	verifier.WithIdentity("exact-issuer", "exact-subject")
-	verifier.WithIdentityRegExp("regex-issuer-.*", "regex-subject-.*")
-	verifier.WithIdentity("", "empty-issuer-test")  // Test empty issuer
-	verifier.WithIdentity("empty-subject-test", "") // Test empty subject
-
-	require.Len(t, verifier.identities, 4)
-
-	// Test exact identity
-	assert.Equal(t, "exact-issuer", verifier.identities[0].Issuer)
-	assert.Equal(t, "exact-subject", verifier.identities[0].Subject)
-
-	// Test regex identity
-	assert.Equal(t, "regex-issuer-.*", verifier.identities[1].IssuerRegExp)
-	assert.Equal(t, "regex-subject-.*", verifier.identities[1].SubjectRegExp)
-
-	// Test empty issuer
-	assert.Empty(t, verifier.identities[2].Issuer)
-	assert.Equal(t, "empty-issuer-test", verifier.identities[2].Subject)
-
-	// Test empty subject
-	assert.Equal(t, "empty-subject-test", verifier.identities[3].Issuer)
-	assert.Empty(t, verifier.identities[3].Subject)
-}
-
 func TestBase64Encoding(t *testing.T) {
 	// Test that our base64 encoding logic works correctly
 	testData := []byte("test signature data")

@@ -60,9 +60,12 @@ type ScriptProviderConfig struct {
 	RemoveScriptSignature string `json:"removeScriptSignature,omitempty"`
 	GetScriptSignature    string `json:"getScriptSignature,omitempty"`
 
-	// OIDC parameters for signature verification
+	// parameters for signature verification
+	KeylessSigning      bool   `json:"keylessSigning,omitempty"`
 	SigningOIDCIssuer   string `json:"signingOIDCIssuer,omitempty"`
 	SigningOIDCIdentity string `json:"signingOIDCIdentity,omitempty"`
+	SigningCert         string `json:"signingCert,omitempty"`
+	SigningCertChain    string `json:"signingCertChain,omitempty"`
 }
 
 type ScriptProvider struct {
@@ -116,17 +119,31 @@ func ScriptProviderConfigFromMap(properties map[string]string) (ScriptProviderCo
 		ret.GetScriptSignature = v
 	}
 
+	if v, ok := properties["keylessSigning"]; ok {
+		if v == "true" {
+			ret.KeylessSigning = true
+		} else if v == "false" {
+			ret.KeylessSigning = false
+		} else {
+			return ret, v1alpha2.NewCOAError(nil, "invalid keylessSigning value, expected 'true' or 'false'", v1alpha2.BadConfig)
+		}
+	} else {
+		ret.KeylessSigning = false // Default to false if not specified
+	}
+
 	// If any signatures are provided, OIDC parameters are required
 	if ret.ApplyScriptSignature != "" || ret.RemoveScriptSignature != "" || ret.GetScriptSignature != "" {
 		if v, ok := properties["signingOIDCIssuer"]; ok {
 			ret.SigningOIDCIssuer = v
-		} else {
-			return ret, v1alpha2.NewCOAError(nil, "OIDC issuer required when script signatures are specified", v1alpha2.BadConfig)
 		}
 		if v, ok := properties["signingOIDCIdentity"]; ok {
 			ret.SigningOIDCIdentity = v
-		} else {
-			return ret, v1alpha2.NewCOAError(nil, "OIDC identity required when script signatures are specified", v1alpha2.BadConfig)
+		}
+		if v, ok := properties["signingCert"]; ok {
+			ret.SigningCert = v
+		}
+		if v, ok := properties["signingCertChain"]; ok {
+			ret.SigningCertChain = v
 		}
 	}
 	return ret, nil
@@ -487,19 +504,22 @@ func (*ScriptProvider) GetValidationRule(ctx context.Context) model.ValidationRu
 }
 
 // createVerifier creates a cosign verifier with OIDC identity requirements
-func createVerifier(oidcIssuer, oidcIdentity string) (*verify.SignatureVerifier, error) {
-	verifier, err := verify.NewSignatureVerifier(context.Background(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create signature verifier: %w", err)
-	}
+func createVerifier(config ScriptProviderConfig) (*verify.SignatureVerifier, error) {
+	verifier := &verify.SignatureVerifier{}
 
-	if oidcIssuer != "" && oidcIdentity != "" {
-		verifier.WithIdentityRegExp(oidcIssuer, oidcIdentity)
+	if config.KeylessSigning {
+		// Validate required parameters for keyless signing
+		if config.SigningOIDCIssuer == "" || config.SigningOIDCIdentity == "" {
+			return nil, fmt.Errorf("SigningOIDCIssuer and SigningOIDCIdentity must be specified for keyless signing")
+		}
+		return verifier.WithKeylessVerification(config.SigningOIDCIssuer, config.SigningOIDCIdentity)
 	} else {
-		return nil, fmt.Errorf("OIDC issuer and identity must be specified for signature verification")
+		// Validate required parameter for certificate signing
+		if config.SigningCert == "" {
+			return nil, fmt.Errorf("SigningCert must be specified for certificate-based signing")
+		}
+		return verifier.WithCertificateVerification(config.SigningCert, config.SigningCertChain)
 	}
-
-	return verifier, nil
 }
 
 // verifyScript verifies a downloaded script using its signature URL
@@ -508,13 +528,8 @@ func (i *ScriptProvider) verifyScript(ctx context.Context, scriptPath string, si
 		return nil // Skip verification if no signature
 	}
 
-	// Validate OIDC parameters
-	if i.Config.SigningOIDCIssuer == "" || i.Config.SigningOIDCIdentity == "" {
-		return fmt.Errorf("OIDC parameters required when script signatures are specified")
-	}
-
 	// Create verifier
-	verifier, err := createVerifier(i.Config.SigningOIDCIssuer, i.Config.SigningOIDCIdentity)
+	verifier, err := createVerifier(i.Config)
 	if err != nil {
 		return fmt.Errorf("failed to create verifier: %w", err)
 	}

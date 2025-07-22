@@ -271,6 +271,7 @@ func TestScriptVerification(t *testing.T) {
 		"applyScriptSignature":  "", //scriptFolder + "/mock-apply.sh.bundle",
 		"removeScriptSignature": scriptFolder + "/mock-remove.sh.bundle",
 		"getScriptSignature":    scriptFolder + "/mock-get.sh.bundle",
+		"keylessSigning":        "true",
 		"signingOIDCIssuer":     "https://github.com/login/oauth",
 		"signingOIDCIdentity":   "xdlisjtu@gmail.com",
 	})
@@ -292,6 +293,7 @@ func TestScriptVerificationLocal(t *testing.T) {
 		"applyScriptSignature":  scriptFolder + "/mock-apply.sh.bundle",
 		"removeScriptSignature": scriptFolder + "/mock-remove.sh.bundle",
 		"getScriptSignature":    scriptFolder + "/mock-get.sh.bundle",
+		"keylessSigning":        "true",
 		"signingOIDCIssuer":     "https://github.com/login/oauth",
 		"signingOIDCIdentity":   "xdlisjtu@gmail.com",
 	})
@@ -302,6 +304,53 @@ func TestScriptVerificationLocal(t *testing.T) {
 	err = provider.verifyScript(ctx, "/home/xingdong/symphony/api/pkg/apis/v1alpha1/providers/target/script/mock-get.sh", provider.Config.GetScriptSignature)
 	require.Nil(t, err)
 	err = provider.verifyScript(ctx, "/home/xingdong/symphony/api/pkg/apis/v1alpha1/providers/target/script/mock-remove.sh", provider.Config.RemoveScriptSignature)
+	require.Nil(t, err)
+}
+
+func TestScriptVerificationWithCertLocal(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptFolder := "/home/xingdong/symphony/api/pkg/apis/v1alpha1/providers/target/script/"
+	// Test the provider
+	provider := ScriptProvider{}
+	err := provider.InitWithMap(map[string]string{
+		"name":                  "test",
+		"stagingFolder":         tmpDir,
+		"scriptFolder":          scriptFolder,
+		"applyScript":           "mock-apply.sh",
+		"removeScript":          "mock-remove.sh",
+		"getScript":             "mock-get.sh",
+		"applyScriptSignature":  "",
+		"removeScriptSignature": "",
+		"getScriptSignature":    "/home/xingdong/symphony/myfile.txt.bundle",
+		"keylessSigning":        "false",
+		"signingCert": `-----BEGIN CERTIFICATE-----
+MIIEFTCCAv2gAwIBAgIURnRdWQcYLOxfBqWxKwtOiPL9TDowDQYJKoZIhvcNAQEL
+BQAwgZkxCzAJBgNVBAYTAkNOMREwDwYDVQQIDAhTaGFuZ2hhaTERMA8GA1UEBwwI
+U2hhbmdoYWkxEjAQBgNVBAoMCU1pY3Jvc29mdDEUMBIGA1UECwwLRW5naW5lZXJp
+bmcxFDASBgNVBAMMC1hpbmdkb25nIExpMSQwIgYJKoZIhvcNAQkBFhV4aW5nZGxp
+QG1pY3Jvc29mdC5jb20wHhcNMjUwNzIxMDIxNTExWhcNMjYwNzIxMDIxNTExWjCB
+mTELMAkGA1UEBhMCQ04xETAPBgNVBAgMCFNoYW5naGFpMREwDwYDVQQHDAhTaGFu
+Z2hhaTESMBAGA1UECgwJTWljcm9zb2Z0MRQwEgYDVQQLDAtFbmdpbmVlcmluZzEU
+MBIGA1UEAwwLWGluZ2RvbmcgTGkxJDAiBgkqhkiG9w0BCQEWFXhpbmdkbGlAbWlj
+cm9zb2Z0LmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALNmZEir
+f01lPBaP3AdnHDGJA4KeTfq2sqz6sQKAWGv7iQl4iXlvbjPg0sJ77fa222+ostKh
+xNEjj6UYudVQ38BZTlpUyv9EmFiM03teVBadnrNiVz+fjZwdrbr8DaraPfiQfz2v
+PyyULSTFrL4LS/4MBAwTJNlWWqXzBYpNQoUA5DCPizZr+YgIE52+8/ZqFt6jrj99
+8ozhJ4Mm7bldh5RwEMvQrfU2SUGB3m9stdqEVZOi2eT8+E8wsDNlYJXINgaYcJpj
+Ei3xvKcKCCby/bBVn+JAKylb5BpcpUoEEvrwLUJv2MZvBefzUO6KNDIJcv4i0RlW
+MII+4PC0uSbDKN0CAwEAAaNTMFEwHQYDVR0OBBYEFD6l93w+rOfzq/MrFn0MbYzW
+Yn9BMB8GA1UdIwQYMBaAFD6l93w+rOfzq/MrFn0MbYzWYn9BMA8GA1UdEwEB/wQF
+MAMBAf8wDQYJKoZIhvcNAQELBQADggEBAFUsk6FqHjyIXwYir56siMHE/bRFrLcI
+OUIUI0cOhv3GLkhaiV0yx4LpR6tiCEu0PZ8b0IctHX2zCa3LtnO7YVKirX8dQ2h2
+PfL9FC2ftLoZs3XUGtO4PA00RRC7h/hJPk3S7aDHffUXEvQlVJ0/uOOEhhqBMrHa
+nRBNjIStK1cc8qIwgnVkyq/UoFyD4e7Kq5gCAhfdTCFIDVkGXbS0edj90ph3Z9nk
+vPzVBxUzlMdObPeSI88pI8fbdoTsJdjrovCh5SlCtsrQKejwNKcoEt+kvw7QAoRJ
+OPHvvi7KlSP6bz8buZkWKvFhuDnUOGL6PRSdmAvpT3/NEve+18l9uoU=
+-----END CERTIFICATE-----`,
+	})
+	require.Nil(t, err)
+	ctx := context.Background()
+	err = provider.verifyScript(ctx, "/home/xingdong/symphony/api/pkg/apis/v1alpha1/providers/target/script/mock-get.sh", provider.Config.GetScriptSignature)
 	require.Nil(t, err)
 }
 
@@ -345,6 +394,104 @@ func TestScriptVerificationFailure(t *testing.T) {
 	})
 	require.NotNil(t, err)
 	assert.Contains(t, err.Error(), "script verification failed")
+}
+
+// TestCreateVerifierWithKeylessSigning tests creating a verifier with keyless signing configuration
+func TestCreateVerifierWithKeylessSigning(t *testing.T) {
+	config := ScriptProviderConfig{
+		KeylessSigning:      true,
+		SigningOIDCIssuer:   "https://github.com/login/oauth",
+		SigningOIDCIdentity: "test@example.com",
+	}
+
+	verifier, err := createVerifier(config)
+	require.NoError(t, err)
+	require.NotNil(t, verifier)
+
+	// Verify that the keyless verifier was created successfully
+	assert.NotNil(t, verifier)
+}
+
+// TestCreateVerifierWithCertificateSigning tests creating a verifier with certificate signing configuration
+func TestCreateVerifierWithCertificateSigning(t *testing.T) {
+	certPEM := `-----BEGIN CERTIFICATE-----
+MIIBhTCCASugAwIBAgIQIRi6zePL6mKjOipn+dNuaTAKBggqhkjOPQQDAjASMRAw
+DgYDVQQKEwdBY21lIENvMB4XDTE3MTAyMDE5NDMwNloXDTE4MTAyMDE5NDMwNlow
+EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABD0d
+7VNhbWvZLWPuj/RtHFjvtJBEwOkhbN/BnnE8rnZR8+sbwnc/KhCk3FhnpHZnQz7B
+5aETbbIgmuvewdjvSBSjYzBhMA4GA1UdDwEB/wQEAwICpDATBgNVHSUEDDAKBggr
+BgEFBQcDATAPBgNVHRMBAf8EBTADAQH/MCkGA1UdEQQiMCCCDmxvY2FsaG9zdDo1
+NDUzgg4xMjcuMC4wLjE6NTQ1MzAKBggqhkjOPQQDAgNIADBFAiEA2zpJEPQyz6/l
+Wf86aX6PepsntZv2GYlA5UpabfT2EZICICpJ5h/iI+i341gBmLiAFQOyTDT+/wQc
+6MF9+Yw1Yy0t
+-----END CERTIFICATE-----`
+
+	config := ScriptProviderConfig{
+		KeylessSigning: false,
+		SigningCert:    certPEM,
+	}
+
+	verifier, err := createVerifier(config)
+	require.NoError(t, err)
+	require.NotNil(t, verifier)
+
+	// Verify that the certificate verifier was created successfully
+	assert.NotNil(t, verifier)
+}
+
+// TestCreateVerifierFailures tests various error cases when creating a verifier
+func TestCreateVerifierFailures(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      ScriptProviderConfig
+		expectedErr string
+	}{
+		{
+			name: "keyless signing missing OIDC issuer",
+			config: ScriptProviderConfig{
+				KeylessSigning:      true,
+				SigningOIDCIdentity: "test@example.com",
+			},
+			expectedErr: "SigningOIDCIssuer and SigningOIDCIdentity must be specified for keyless signing",
+		},
+		{
+			name: "keyless signing missing OIDC identity",
+			config: ScriptProviderConfig{
+				KeylessSigning:    true,
+				SigningOIDCIssuer: "https://github.com/login/oauth",
+			},
+			expectedErr: "SigningOIDCIssuer and SigningOIDCIdentity must be specified for keyless signing",
+		},
+		{
+			name: "certificate signing missing cert",
+			config: ScriptProviderConfig{
+				KeylessSigning: false,
+			},
+			expectedErr: "SigningCert must be specified for certificate-based signing",
+		},
+		{
+			name: "certificate signing with invalid cert",
+			config: ScriptProviderConfig{
+				KeylessSigning: false,
+				SigningCert:    "invalid certificate data",
+			},
+			expectedErr: "parsing certificate",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verifier, err := createVerifier(tt.config)
+			if tt.expectedErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedErr)
+				assert.Nil(t, verifier)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, verifier)
+			}
+		})
+	}
 }
 
 // Conformance: you should call the conformance suite to ensure provider conformance

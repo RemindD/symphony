@@ -95,8 +95,11 @@ type (
 		Timeout             string `json:"timeout,omitempty"`
 		Username            string `json:"username,omitempty"`
 		Password            string `json:"password,omitempty"`
+		KeylessSigning      bool   `json:"keylessSigning,omitempty"`      // optional keyless authentication for the chart
 		SigningOIDCIssuer   string `json:"signingOIDCIssuer,omitempty"`   // optional OIDC issuer for signing
 		SigningOIDCIdentity string `json:"signingOIDCIdentity,omitempty"` // optional OIDC identity for signing
+		SigningCert         string `json:"signingCert,omitempty"`         // optional certificate for signing
+		SigningCertChain    string `json:"signingCertChain,omitempty"`    // optional certificate chain for signing
 	}
 )
 
@@ -650,20 +653,23 @@ func (i *HelmTargetProvider) Apply(ctx context.Context, deployment model.Deploym
 	return ret, nil
 }
 
-// createVerifier creates a cosign verifier with OIDC identity requirements
-func createVerifier(oidcIssuer, oidcIdentity string) (*verify.SignatureVerifier, error) {
-	verifier, err := verify.NewSignatureVerifier(context.Background(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create signature verifier: %w", err)
-	}
+// createVerifier creates a cosign verifier based on chart signing configuration
+func createVerifier(chart *HelmChartProperty) (*verify.SignatureVerifier, error) {
+	verifier := &verify.SignatureVerifier{}
 
-	if oidcIssuer != "" && oidcIdentity != "" {
-		verifier.WithIdentityRegExp(oidcIssuer, oidcIdentity)
+	if chart.KeylessSigning {
+		// Validate required parameters for keyless signing
+		if chart.SigningOIDCIssuer == "" || chart.SigningOIDCIdentity == "" {
+			return nil, fmt.Errorf("SigningOIDCIssuer and SigningOIDCIdentity must be specified for keyless signing")
+		}
+		return verifier.WithKeylessVerification(chart.SigningOIDCIssuer, chart.SigningOIDCIdentity)
 	} else {
-		return nil, fmt.Errorf("OIDC issuer and identity must be specified for signature verification")
+		// Validate required parameter for certificate signing
+		if chart.SigningCert == "" {
+			return nil, fmt.Errorf("SigningCert must be specified for certificate-based signing")
+		}
+		return verifier.WithCertificateVerification(chart.SigningCert, chart.SigningCertChain)
 	}
-
-	return verifier, nil
 }
 
 // Helper functions to determine chart and signature types
@@ -720,8 +726,8 @@ func (i *HelmTargetProvider) preVerifySignature(ctx context.Context, chart *Helm
 
 	sLog.InfofCtx(ctx, "  P (Helm Target): Pre-verifying chart signature before download for chart: %s", chart.Repo)
 
-	// Create cosign verifier with OIDC identity requirements
-	verifier, err := createVerifier(chart.SigningOIDCIssuer, chart.SigningOIDCIdentity)
+	// Create cosign verifier
+	verifier, err := createVerifier(chart)
 	if err != nil {
 		return "", fmt.Errorf("failed to create verifier: %w", err)
 	}
@@ -888,8 +894,8 @@ func (i *HelmTargetProvider) preVerifyHTTPSignature(ctx context.Context, chart *
 func (i *HelmTargetProvider) postVerifySignature(ctx context.Context, chart *HelmChartProperty, chartPath, sigPath string) error {
 	sLog.InfofCtx(ctx, "  P (Helm Target): Post-verifying HTTP chart signature. Chart: %s, Signature: %s", chartPath, sigPath)
 
-	// Create cosign verifier with OIDC identity requirements
-	verifier, err := createVerifier(chart.SigningOIDCIssuer, chart.SigningOIDCIdentity)
+	// Create cosign verifier
+	verifier, err := createVerifier(chart)
 	if err != nil {
 		return fmt.Errorf("failed to create verifier: %w", err)
 	}

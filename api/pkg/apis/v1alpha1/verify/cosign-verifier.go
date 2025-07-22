@@ -97,6 +97,10 @@ func (sv *SignatureVerifier) WithCertificateVerification(certPEM, chainPEM strin
 		return nil, fmt.Errorf("no certificates found in certPEM")
 	}
 
+	if chainPEM == "" {
+		chainPEM = certPEM // Use the same cert as chain if no chain provided
+	}
+
 	// Parse the certificate chain
 	chainCerts, err := cryptoutils.UnmarshalCertificatesFromPEM([]byte(chainPEM))
 	if err != nil {
@@ -124,7 +128,7 @@ func (sv *SignatureVerifier) WithCertificateVerification(certPEM, chainPEM strin
 }
 
 // WithKeylessVerification configures the verifier for keyless verification using Fulcio and Rekor
-func (sv *SignatureVerifier) WithKeylessVerification() (*SignatureVerifier, error) {
+func (sv *SignatureVerifier) WithKeylessVerification(SigningOIDCIssuer, SigningOIDCIdentity string) (*SignatureVerifier, error) {
 	sv.verifyType = KeylessVerification
 
 	// Get Fulcio root certificates if not already set
@@ -171,88 +175,16 @@ func (sv *SignatureVerifier) WithKeylessVerification() (*SignatureVerifier, erro
 		}
 		sv.ctLogPubKeys = ctLogPubs
 	}
-
+	sv.identities = append(sv.identities, cosign.Identity{
+		IssuerRegExp:  SigningOIDCIssuer,
+		SubjectRegExp: SigningOIDCIdentity,
+	})
 	return sv, nil
 }
 
 // GetRekorClient returns a configured Rekor client
 func GetRekorClient() (*client.Rekor, error) {
 	return rekor.GetRekorClient(RekorURL)
-}
-
-// NewSignatureVerifier creates a new signature verifier
-func NewSignatureVerifier(ctx context.Context, roots *x509.CertPool) (*SignatureVerifier, error) {
-	// Get Fulcio root certificates
-	if roots == nil {
-		var err error
-		roots, err = fulcioroots.Get()
-		if err != nil {
-			return nil, fmt.Errorf("getting Fulcio roots: %w", err)
-		}
-	}
-	intermediates, err := fulcioroots.GetIntermediates()
-	if err != nil {
-		return nil, fmt.Errorf("getting Fulcio intermediates: %w", err)
-	}
-
-	// Initialize rekor client
-	rekorClient, err := GetRekorClient()
-	if err != nil {
-		return nil, fmt.Errorf("getting rekor client: %w", err)
-	}
-
-	// Get Rekor public keys
-	rekorPubs, err := cosign.GetRekorPubs(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting Rekor public keys: %w", err)
-	}
-
-	// Get CT Log public keys
-	ctLogPubs, err := cosign.GetCTLogPubs(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting CT log public keys: %w", err)
-	}
-
-	return &SignatureVerifier{
-		rootCerts:         roots,
-		intermediateCerts: intermediates,
-		identities:        []cosign.Identity{},
-		rekorClient:       rekorClient,
-		rekorPubKeys:      rekorPubs,
-		ctLogPubKeys:      ctLogPubs,
-		ignoreSCT:         false, // Default to requiring SCT
-		ignoreTlog:        false, // Default to requiring tlog
-	}, nil
-}
-
-// WithIgnoreSCT configures whether to skip SCT verification
-func (sv *SignatureVerifier) WithIgnoreSCT(ignore bool) *SignatureVerifier {
-	sv.ignoreSCT = ignore
-	return sv
-}
-
-// WithIgnoreTlog configures whether to skip transparency log verification
-func (sv *SignatureVerifier) WithIgnoreTlog(ignore bool) *SignatureVerifier {
-	sv.ignoreTlog = ignore
-	return sv
-}
-
-// WithIdentity adds an identity requirement
-func (sv *SignatureVerifier) WithIdentity(issuer, subject string) *SignatureVerifier {
-	sv.identities = append(sv.identities, cosign.Identity{
-		Issuer:  issuer,
-		Subject: subject,
-	})
-	return sv
-}
-
-// WithIdentityRegExp adds an identity requirement using regular expressions
-func (sv *SignatureVerifier) WithIdentityRegExp(issuerRegex, subjectRegex string) *SignatureVerifier {
-	sv.identities = append(sv.identities, cosign.Identity{
-		IssuerRegExp:  issuerRegex,
-		SubjectRegExp: subjectRegex,
-	})
-	return sv
 }
 
 // verifyImage contains the common verification logic
