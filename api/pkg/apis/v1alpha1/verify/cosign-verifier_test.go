@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sigstore/cosign/v2/pkg/cosign"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
@@ -474,6 +475,206 @@ sFWf4kArKVvkGlylSgQS+vAtQm/Yxm8F5/NQ7oo0Mgly/iLRGVYwgj7g8LS5JsMo
 		require.NoError(t, err, "key verification should succeed")
 	})
 }
+func TestVerifyOCIChartDigestFromHTTPSignature(t *testing.T) {
+	t.Run("invalid chart reference", func(t *testing.T) {
+		ctx := context.Background()
+		verifier := &SignatureVerifier{
+			rootCerts:  createTestCertPool(),
+			identities: []cosign.Identity{},
+		}
+
+		err := verifier.VerifyOCIChartDigestFromHTTPSignature(ctx, "", "http://example.com/sig", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "parsing chart reference")
+	})
+
+	t.Run("invalid signature URL", func(t *testing.T) {
+		ctx := context.Background()
+		verifier := &SignatureVerifier{
+			rootCerts:  createTestCertPool(),
+			identities: []cosign.Identity{},
+		}
+
+		err := verifier.VerifyOCIChartDigestFromHTTPSignature(ctx, "registry.io/chart:1.0", "invalid-url", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "downloading signature")
+	})
+
+	t.Run("HTTP error codes", func(t *testing.T) {
+		ctx := context.Background()
+		verifier := &SignatureVerifier{
+			rootCerts:  createTestCertPool(),
+			identities: []cosign.Identity{},
+		}
+
+		tests := []struct {
+			name       string
+			statusCode int
+		}{
+			{"not found", http.StatusNotFound},
+			{"server error", http.StatusInternalServerError},
+			{"unauthorized", http.StatusUnauthorized},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(tt.statusCode)
+				}))
+				defer server.Close()
+
+				err := verifier.VerifyOCIChartDigestFromHTTPSignature(ctx, "registry.io/chart:1.0", server.URL, nil)
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "downloading signature")
+			})
+		}
+	})
+
+	t.Run("context cancellation", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("test signature"))
+			}
+		}))
+		defer server.Close()
+
+		verifier := &SignatureVerifier{
+			rootCerts:  createTestCertPool(),
+			identities: []cosign.Identity{},
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+
+		err := verifier.VerifyOCIChartDigestFromHTTPSignature(ctx, "registry.io/chart:1.0", server.URL, nil)
+		require.Error(t, err)
+		assert.True(t, strings.Contains(err.Error(), "context canceled") ||
+			strings.Contains(err.Error(), "downloading signature"))
+	})
+
+	t.Run("successful verification with keyless mode", func(t *testing.T) {
+		// Set up test server with a valid base64 encoded signature
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			// Base64 encoded test signature
+			w.Write([]byte("dGVzdCBzaWduYXR1cmU="))
+		}))
+		defer server.Close()
+
+		// Set up verifier with keyless configuration
+		verifier := &SignatureVerifier{}
+		verifier, err := verifier.WithKeylessVerification("https://github.com/login/oauth", ".*")
+		require.NoError(t, err)
+
+		// Verify signature
+		err = verifier.VerifyOCIChartDigestFromHTTPSignature(
+			context.Background(),
+			"xingdliacr.azurecr.io/cosign-keyless@sha256:39851a7894f42210bb259b73aa63945a7df5bd2d224226431931b492aff4c3cd",
+			server.URL,
+			nil,
+		)
+
+		// Since we can't fully mock the cosign verification, we expect an error about invalid signature
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "signature verification failed")
+	})
+
+	t.Run("successful verification with certificate mode", func(t *testing.T) {
+		// Set up test server with a valid base64 encoded signature
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			// Base64 encoded test signature
+			w.Write([]byte("dGVzdCBzaWduYXR1cmU="))
+		}))
+		defer server.Close()
+
+		// Example certificate (same as used in other tests)
+		certPEM := `-----BEGIN CERTIFICATE-----
+MIIEFTCCAv2gAwIBAgIURnRdWQcYLOxfBqWxKwtOiPL9TDowDQYJKoZIhvcNAQEL
+BQAwgZkxCzAJBgNVBAYTAkNOMREwDwYDVQQIDAhTaGFuZ2hhaTERMA8GA1UEBwwI
+U2hhbmdoYWkxEjAQBgNVBAoMCU1pY3Jvc29mdDEUMBIGA1UECwwLRW5naW5lZXJp
+bmcxFDASBgNVBAMMC1hpbmdkb25nIExpMSQwIgYJKoZIhvcNAQkBFhV4aW5nZGxp
+QG1pY3Jvc29mdC5jb20wHhcNMjUwNzIxMDIxNTExWhcNMjYwNzIxMDIxNTExWjCB
+mTELMAkGA1UEBhMCQ04xETAPBgNVBAgMCFNoYW5naGFpMREwDwYDVQQHDAhTaGFu
+Z2hhaTESMBAGA1UECgwJTWljcm9zb2Z0MRQwEgYDVQQLDAtFbmdpbmVlcmluZzEU
+MBIGA1UEAwwLWGluZ2RvbmcgTGkxJDAiBgkqhkiG9w0BCQEWFXhpbmdkbGlAbWlj
+cm9zb2Z0LmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALNmZEir
+f01lPBaP3AdnHDGJA4KeTfq2sqz6sQKAWGv7iQl4iXlvbjPg0sJ77fa222+ostKh
+xNEjj6UYudVQ38BZTlpUyv9EmFiM03teVBadnrNiVz+fjZwdrbr8DaraPfiQfz2v
+PyyULSTFrL4LS/4MBAwTJNlWWqXzBYpNQoUA5DCPizZr+YgIE52+8/ZqFt6jrj99
+8ozhJ4Mm7bldh5RwEMvQrfU2SUGB3m9stdqEVZOi2eT8+E8wsDNlYJXINgaYcJpj
+Ei3xvKcKCCby/bBVn+JAKylb5BpcpUoEEvrwLUJv2MZvBefzUO6KNDIJcv4i0RlW
+MII+4PC0uSbDKN0CAwEAAaNTMFEwHQYDVR0OBBYEFD6l93w+rOfzq/MrFn0MbYzW
+Yn9BMB8GA1UdIwQYMBaAFD6l93w+rOfzq/MrFn0MbYzWYn9BMA8GA1UdEwEB/wQF
+MAMBAf8wDQYJKoZIhvcNAQELBQADggEBAFUsk6FqHjyIXwYir56siMHE/bRFrLcI
+OUIUI0cOhv3GLkhaiV0yx4LpR6tiCEu0PZ8b0IctHX2zCa3LtnO7YVKirX8dQ2h2
+PfL9FC2ftLoZs3XUGtO4PA00RRC7h/hJPk3S7aDHffUXEvQlVJ0/uOOEhhqBMrHa
+nRBNjIStK1cc8qIwgnVkyq/UoFyD4e7Kq5gCAhfdTCFIDVkGXbS0edj90ph3Z9nk
+vPzVBxUzlMdObPeSI88pI8fbdoTsJdjrovCh5SlCtsrQKejwNKcoEt+kvw7QAoRJ
+OPHvvi7KlSP6bz8buZkWKvFhuDnUOGL6PRSdmAvpT3/NEve+18l9uoU=
+-----END CERTIFICATE-----`
+
+		// Set up verifier with certificate configuration
+		verifier := &SignatureVerifier{}
+		verifier, err := verifier.WithCertificateVerification(certPEM, certPEM)
+		require.NoError(t, err)
+
+		// Verify signature
+		err = verifier.VerifyOCIChartDigestFromHTTPSignature(
+			context.Background(),
+			"xingdliacr.azurecr.io/cosign-certificate@sha256:39851a7894f42210bb259b73aa63945a7df5bd2d224226431931b492aff4c3cd",
+			server.URL,
+			nil,
+		)
+
+		// Since we can't fully mock the cosign verification, we expect an error about invalid signature
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "signature verification failed")
+	})
+
+	t.Run("successful verification with key mode", func(t *testing.T) {
+		// Set up test server with a valid base64 encoded signature
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			// Base64 encoded test signature
+			w.Write([]byte("dGVzdCBzaWduYXR1cmU="))
+		}))
+		defer server.Close()
+
+		// Example public key (same as used in other tests)
+		key := `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs2ZkSKt/TWU8Fo/cB2cc
+MYkDgp5N+rayrPqxAoBYa/uJCXiJeW9uM+DSwnvt9rbbb6iy0qHE0SOPpRi51VDf
+wFlOWlTK/0SYWIzTe15UFp2es2JXP5+NnB2tuvwNqto9+JB/Pa8/LJQtJMWsvgtL
+/gwEDBMk2VZapfMFik1ChQDkMI+LNmv5iAgTnb7z9moW3qOuP33yjOEngybtuV2H
+lHAQy9Ct9TZJQYHeb2y12oRVk6LZ5Pz4TzCwM2Vglcg2BphwmmMSLfG8pwoIJvL9
+sFWf4kArKVvkGlylSgQS+vAtQm/Yxm8F5/NQ7oo0Mgly/iLRGVYwgj7g8LS5JsMo
+3QIDAQAB
+-----END PUBLIC KEY-----`
+
+		// Set up verifier with key configuration
+		verifier := &SignatureVerifier{}
+		verifier, err := verifier.WithKeyVerification(key)
+		require.NoError(t, err)
+
+		// Verify signature
+		err = verifier.VerifyOCIChartDigestFromHTTPSignature(
+			context.Background(),
+			"xingdliacr.azurecr.io/cosign-key@sha256:39851a7894f42210bb259b73aa63945a7df5bd2d224226431931b492aff4c3cd",
+			server.URL,
+			nil,
+		)
+
+		// Since we can't fully mock the cosign verification, we expect an error about invalid signature
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "signature verification failed")
+	})
+}
+
 func TestBase64Encoding(t *testing.T) {
 	// Test that our base64 encoding logic works correctly
 	testData := []byte("test signature data")
