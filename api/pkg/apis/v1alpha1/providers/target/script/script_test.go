@@ -271,7 +271,7 @@ func TestScriptVerification(t *testing.T) {
 		"applyScriptSignature":  "", //scriptFolder + "/mock-apply.sh.bundle",
 		"removeScriptSignature": scriptFolder + "/mock-remove.sh.bundle",
 		"getScriptSignature":    scriptFolder + "/mock-get.sh.bundle",
-		"keylessSigning":        "true",
+		"verificationType":      "keyless",
 		"signingOIDCIssuer":     "https://github.com/login/oauth",
 		"signingOIDCIdentity":   "xdlisjtu@gmail.com",
 	})
@@ -293,7 +293,7 @@ func TestScriptVerificationLocal(t *testing.T) {
 		"applyScriptSignature":  scriptFolder + "/mock-apply.sh.bundle",
 		"removeScriptSignature": scriptFolder + "/mock-remove.sh.bundle",
 		"getScriptSignature":    scriptFolder + "/mock-get.sh.bundle",
-		"keylessSigning":        "true",
+		"verificationType":      "keyless",
 		"signingOIDCIssuer":     "https://github.com/login/oauth",
 		"signingOIDCIdentity":   "xdlisjtu@gmail.com",
 	})
@@ -322,31 +322,16 @@ func TestScriptVerificationWithCertLocal(t *testing.T) {
 		"applyScriptSignature":  "",
 		"removeScriptSignature": "",
 		"getScriptSignature":    "/home/xingdong/symphony/myfile.txt.bundle",
-		"keylessSigning":        "false",
-		"signingCert": `-----BEGIN CERTIFICATE-----
-MIIEFTCCAv2gAwIBAgIURnRdWQcYLOxfBqWxKwtOiPL9TDowDQYJKoZIhvcNAQEL
-BQAwgZkxCzAJBgNVBAYTAkNOMREwDwYDVQQIDAhTaGFuZ2hhaTERMA8GA1UEBwwI
-U2hhbmdoYWkxEjAQBgNVBAoMCU1pY3Jvc29mdDEUMBIGA1UECwwLRW5naW5lZXJp
-bmcxFDASBgNVBAMMC1hpbmdkb25nIExpMSQwIgYJKoZIhvcNAQkBFhV4aW5nZGxp
-QG1pY3Jvc29mdC5jb20wHhcNMjUwNzIxMDIxNTExWhcNMjYwNzIxMDIxNTExWjCB
-mTELMAkGA1UEBhMCQ04xETAPBgNVBAgMCFNoYW5naGFpMREwDwYDVQQHDAhTaGFu
-Z2hhaTESMBAGA1UECgwJTWljcm9zb2Z0MRQwEgYDVQQLDAtFbmdpbmVlcmluZzEU
-MBIGA1UEAwwLWGluZ2RvbmcgTGkxJDAiBgkqhkiG9w0BCQEWFXhpbmdkbGlAbWlj
-cm9zb2Z0LmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALNmZEir
-f01lPBaP3AdnHDGJA4KeTfq2sqz6sQKAWGv7iQl4iXlvbjPg0sJ77fa222+ostKh
-xNEjj6UYudVQ38BZTlpUyv9EmFiM03teVBadnrNiVz+fjZwdrbr8DaraPfiQfz2v
-PyyULSTFrL4LS/4MBAwTJNlWWqXzBYpNQoUA5DCPizZr+YgIE52+8/ZqFt6jrj99
-8ozhJ4Mm7bldh5RwEMvQrfU2SUGB3m9stdqEVZOi2eT8+E8wsDNlYJXINgaYcJpj
-Ei3xvKcKCCby/bBVn+JAKylb5BpcpUoEEvrwLUJv2MZvBefzUO6KNDIJcv4i0RlW
-MII+4PC0uSbDKN0CAwEAAaNTMFEwHQYDVR0OBBYEFD6l93w+rOfzq/MrFn0MbYzW
-Yn9BMB8GA1UdIwQYMBaAFD6l93w+rOfzq/MrFn0MbYzWYn9BMA8GA1UdEwEB/wQF
-MAMBAf8wDQYJKoZIhvcNAQELBQADggEBAFUsk6FqHjyIXwYir56siMHE/bRFrLcI
-OUIUI0cOhv3GLkhaiV0yx4LpR6tiCEu0PZ8b0IctHX2zCa3LtnO7YVKirX8dQ2h2
-PfL9FC2ftLoZs3XUGtO4PA00RRC7h/hJPk3S7aDHffUXEvQlVJ0/uOOEhhqBMrHa
-nRBNjIStK1cc8qIwgnVkyq/UoFyD4e7Kq5gCAhfdTCFIDVkGXbS0edj90ph3Z9nk
-vPzVBxUzlMdObPeSI88pI8fbdoTsJdjrovCh5SlCtsrQKejwNKcoEt+kvw7QAoRJ
-OPHvvi7KlSP6bz8buZkWKvFhuDnUOGL6PRSdmAvpT3/NEve+18l9uoU=
------END CERTIFICATE-----`,
+		"verificationType":      "key",
+		"signingPublicKey": `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs2ZkSKt/TWU8Fo/cB2cc
+MYkDgp5N+rayrPqxAoBYa/uJCXiJeW9uM+DSwnvt9rbbb6iy0qHE0SOPpRi51VDf
+wFlOWlTK/0SYWIzTe15UFp2es2JXP5+NnB2tuvwNqto9+JB/Pa8/LJQtJMWsvgtL
+/gwEDBMk2VZapfMFik1ChQDkMI+LNmv5iAgTnb7z9moW3qOuP33yjOEngybtuV2H
+lHAQy9Ct9TZJQYHeb2y12oRVk6LZ5Pz4TzCwM2Vglcg2BphwmmMSLfG8pwoIJvL9
+sFWf4kArKVvkGlylSgQS+vAtQm/Yxm8F5/NQ7oo0Mgly/iLRGVYwgj7g8LS5JsMo
+3QIDAQAB
+-----END PUBLIC KEY-----`,
 	})
 	require.Nil(t, err)
 	ctx := context.Background()
@@ -399,7 +384,7 @@ func TestScriptVerificationFailure(t *testing.T) {
 // TestCreateVerifierWithKeylessSigning tests creating a verifier with keyless signing configuration
 func TestCreateVerifierWithKeylessSigning(t *testing.T) {
 	config := ScriptProviderConfig{
-		KeylessSigning:      true,
+		VerificationType:    "keyless",
 		SigningOIDCIssuer:   "https://github.com/login/oauth",
 		SigningOIDCIdentity: "test@example.com",
 	}
@@ -427,8 +412,8 @@ Wf86aX6PepsntZv2GYlA5UpabfT2EZICICpJ5h/iI+i341gBmLiAFQOyTDT+/wQc
 -----END CERTIFICATE-----`
 
 	config := ScriptProviderConfig{
-		KeylessSigning: false,
-		SigningCert:    certPEM,
+		VerificationType: "certificate",
+		SigningCert:      certPEM,
 	}
 
 	verifier, err := createVerifier(config)
@@ -449,7 +434,7 @@ func TestCreateVerifierFailures(t *testing.T) {
 		{
 			name: "keyless signing missing OIDC issuer",
 			config: ScriptProviderConfig{
-				KeylessSigning:      true,
+				VerificationType:    "keyless",
 				SigningOIDCIdentity: "test@example.com",
 			},
 			expectedErr: "SigningOIDCIssuer and SigningOIDCIdentity must be specified for keyless signing",
@@ -457,7 +442,7 @@ func TestCreateVerifierFailures(t *testing.T) {
 		{
 			name: "keyless signing missing OIDC identity",
 			config: ScriptProviderConfig{
-				KeylessSigning:    true,
+				VerificationType:  "keyless",
 				SigningOIDCIssuer: "https://github.com/login/oauth",
 			},
 			expectedErr: "SigningOIDCIssuer and SigningOIDCIdentity must be specified for keyless signing",
@@ -465,15 +450,15 @@ func TestCreateVerifierFailures(t *testing.T) {
 		{
 			name: "certificate signing missing cert",
 			config: ScriptProviderConfig{
-				KeylessSigning: false,
+				VerificationType: "certificate",
 			},
 			expectedErr: "SigningCert must be specified for certificate-based signing",
 		},
 		{
 			name: "certificate signing with invalid cert",
 			config: ScriptProviderConfig{
-				KeylessSigning: false,
-				SigningCert:    "invalid certificate data",
+				VerificationType: "cerficate",
+				SigningCert:      "invalid certificate data",
 			},
 			expectedErr: "parsing certificate",
 		},

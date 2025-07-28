@@ -61,11 +61,12 @@ type ScriptProviderConfig struct {
 	GetScriptSignature    string `json:"getScriptSignature,omitempty"`
 
 	// parameters for signature verification
-	KeylessSigning      bool   `json:"keylessSigning,omitempty"`
-	SigningOIDCIssuer   string `json:"signingOIDCIssuer,omitempty"`
-	SigningOIDCIdentity string `json:"signingOIDCIdentity,omitempty"`
-	SigningCert         string `json:"signingCert,omitempty"`
-	SigningCertChain    string `json:"signingCertChain,omitempty"`
+	VerificationType    verify.VerificationType `json:"verificationType,omitempty"`
+	SigningOIDCIssuer   string                  `json:"signingOIDCIssuer,omitempty"`
+	SigningOIDCIdentity string                  `json:"signingOIDCIdentity,omitempty"`
+	SigningPublicKey    string                  `json:"signingPublicKey,omitempty"` // Optional public key for local verification
+	SigningCert         string                  `json:"signingCert,omitempty"`
+	SigningCertChain    string                  `json:"signingCertChain,omitempty"`
 }
 
 type ScriptProvider struct {
@@ -87,17 +88,17 @@ func ScriptProviderConfigFromMap(properties map[string]string) (ScriptProviderCo
 	if v, ok := properties["applyScript"]; ok {
 		ret.ApplyScript = v
 	} else {
-		return ret, v1alpha2.NewCOAError(nil, "invalid script provider config, exptected 'applyScript'", v1alpha2.BadConfig)
+		return ret, v1alpha2.NewCOAError(nil, "invalid script provider config, expected 'applyScript'", v1alpha2.BadConfig)
 	}
 	if v, ok := properties["removeScript"]; ok {
 		ret.RemoveScript = v
 	} else {
-		return ret, v1alpha2.NewCOAError(nil, "invalid script provider config, exptected 'removeScript'", v1alpha2.BadConfig)
+		return ret, v1alpha2.NewCOAError(nil, "invalid script provider config, expected 'removeScript'", v1alpha2.BadConfig)
 	}
 	if v, ok := properties["getScript"]; ok {
 		ret.GetScript = v
 	} else {
-		return ret, v1alpha2.NewCOAError(nil, "invalid script provider config, exptected 'getScript'", v1alpha2.BadConfig)
+		return ret, v1alpha2.NewCOAError(nil, "invalid script provider config, expected 'getScript'", v1alpha2.BadConfig)
 	}
 	if v, ok := properties["scriptEngine"]; ok {
 		ret.ScriptEngine = v
@@ -119,25 +120,25 @@ func ScriptProviderConfigFromMap(properties map[string]string) (ScriptProviderCo
 		ret.GetScriptSignature = v
 	}
 
-	if v, ok := properties["keylessSigning"]; ok {
-		if v == "true" {
-			ret.KeylessSigning = true
-		} else if v == "false" {
-			ret.KeylessSigning = false
-		} else {
-			return ret, v1alpha2.NewCOAError(nil, "invalid keylessSigning value, expected 'true' or 'false'", v1alpha2.BadConfig)
-		}
-	} else {
-		ret.KeylessSigning = false // Default to false if not specified
-	}
-
 	// If any signatures are provided, OIDC parameters are required
 	if ret.ApplyScriptSignature != "" || ret.RemoveScriptSignature != "" || ret.GetScriptSignature != "" {
+		if vstring, ok := properties["verificationType"]; ok {
+			if v, ok := verify.VerificationTypeMap[vstring]; ok {
+				ret.VerificationType = v
+			} else {
+				return ret, v1alpha2.NewCOAError(nil, fmt.Sprintf("invalid verification type: %s", vstring), v1alpha2.BadConfig)
+			}
+		} else {
+			return ret, v1alpha2.NewCOAError(nil, "invalid script provider config, expected 'verificationType'", v1alpha2.BadConfig)
+		}
 		if v, ok := properties["signingOIDCIssuer"]; ok {
 			ret.SigningOIDCIssuer = v
 		}
 		if v, ok := properties["signingOIDCIdentity"]; ok {
 			ret.SigningOIDCIdentity = v
+		}
+		if v, ok := properties["signingPublicKey"]; ok {
+			ret.SigningPublicKey = v
 		}
 		if v, ok := properties["signingCert"]; ok {
 			ret.SigningCert = v
@@ -507,18 +508,20 @@ func (*ScriptProvider) GetValidationRule(ctx context.Context) model.ValidationRu
 func createVerifier(config ScriptProviderConfig) (*verify.SignatureVerifier, error) {
 	verifier := &verify.SignatureVerifier{}
 
-	if config.KeylessSigning {
+	if config.VerificationType == verify.KeylessVerification {
 		// Validate required parameters for keyless signing
 		if config.SigningOIDCIssuer == "" || config.SigningOIDCIdentity == "" {
 			return nil, fmt.Errorf("SigningOIDCIssuer and SigningOIDCIdentity must be specified for keyless signing")
 		}
 		return verifier.WithKeylessVerification(config.SigningOIDCIssuer, config.SigningOIDCIdentity)
-	} else {
+	} else if config.VerificationType == verify.KeyVerification {
 		// Validate required parameter for certificate signing
-		if config.SigningCert == "" {
-			return nil, fmt.Errorf("SigningCert must be specified for certificate-based signing")
+		if config.SigningPublicKey == "" {
+			return nil, fmt.Errorf("SigningPublicKey must be specified for key-based signing")
 		}
-		return verifier.WithCertificateVerification(config.SigningCert, config.SigningCertChain)
+		return verifier.WithKeyVerification(config.SigningPublicKey)
+	} else {
+		return nil, fmt.Errorf("certificate based verification is not supported for script target provider")
 	}
 }
 

@@ -197,7 +197,8 @@ func TestVerificationModes(t *testing.T) {
 		res, err := verifier.WithKeylessVerification("issuer-.*", "subject-.*")
 		require.NoError(t, err)
 
-		opts := res.convertToCheckOpts()
+		opts, err := res.convertToCheckOpts()
+		require.NoError(t, err)
 		assert.NotNil(t, opts.RootCerts, "root certs should be set")
 		assert.NotNil(t, opts.IntermediateCerts, "intermediate certs should be set")
 		assert.NotNil(t, opts.RekorClient, "rekor client should be set")
@@ -229,7 +230,8 @@ Wf86aX6PepsntZv2GYlA5UpabfT2EZICICpJ5h/iI+i341gBmLiAFQOyTDT+/wQc
 		res, err := verifier.WithCertificateVerification(certPEM, chainPEM)
 		require.NoError(t, err)
 
-		opts := res.convertToCheckOpts()
+		opts, err := res.convertToCheckOpts()
+		require.NoError(t, err)
 		assert.NotNil(t, opts.RootCerts, "root certs should be set")
 		assert.True(t, opts.IgnoreTlog, "tlog verification should be disabled")
 		assert.True(t, opts.IgnoreSCT, "SCT verification should be disabled")
@@ -272,7 +274,7 @@ OPHvvi7KlSP6bz8buZkWKvFhuDnUOGL6PRSdmAvpT3/NEve+18l9uoU=
 		chainPEM := certPEM // Use same cert as chain for this test
 
 		// Set up certificate verification mode
-		imageRef := "xingdliacr.azurecr.io/xingdlitest-demo-data@sha256:39851a7894f42210bb259b73aa63945a7df5bd2d224226431931b492aff4c3cd"
+		imageRef := "xingdliacr.azurecr.io/cosign-certificate@sha256:39851a7894f42210bb259b73aa63945a7df5bd2d224226431931b492aff4c3cd"
 
 		// Configure the verifier for certificate verification
 		res, err := verifier.WithCertificateVerification(certPEM, chainPEM)
@@ -281,15 +283,41 @@ OPHvvi7KlSP6bz8buZkWKvFhuDnUOGL6PRSdmAvpT3/NEve+18l9uoU=
 		// Try to verify the image
 		sigs, bundleVerified, err := res.VerifyWithKeychain(ctx, imageRef)
 
-		// We expect verification to fail since we're using an incorrect certificate
+		// We expect verification to succeeded
 		require.Nil(t, err)
 		assert.False(t, bundleVerified)
 		assert.NotNil(t, sigs)
+	})
 
-		// Note: The verification fails because:
-		// 1. The test certificate is not the one used to sign the image
-		// 2. The signature's certificate chain won't match our test certificate
-		// This validates that our certificate verification is actually working
+	t.Run("verify signed image with key verification", func(t *testing.T) {
+		ctx := context.Background()
+		verifier := &SignatureVerifier{}
+
+		// Example certificate and chain
+		key := `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs2ZkSKt/TWU8Fo/cB2cc
+MYkDgp5N+rayrPqxAoBYa/uJCXiJeW9uM+DSwnvt9rbbb6iy0qHE0SOPpRi51VDf
+wFlOWlTK/0SYWIzTe15UFp2es2JXP5+NnB2tuvwNqto9+JB/Pa8/LJQtJMWsvgtL
+/gwEDBMk2VZapfMFik1ChQDkMI+LNmv5iAgTnb7z9moW3qOuP33yjOEngybtuV2H
+lHAQy9Ct9TZJQYHeb2y12oRVk6LZ5Pz4TzCwM2Vglcg2BphwmmMSLfG8pwoIJvL9
+sFWf4kArKVvkGlylSgQS+vAtQm/Yxm8F5/NQ7oo0Mgly/iLRGVYwgj7g8LS5JsMo
+3QIDAQAB
+-----END PUBLIC KEY-----`
+
+		// Set up certificate verification mode
+		imageRef := "xingdliacr.azurecr.io/cosign-key@sha256:39851a7894f42210bb259b73aa63945a7df5bd2d224226431931b492aff4c3cd"
+
+		// Configure the verifier for key verification
+		res, err := verifier.WithKeyVerification(key)
+		require.NoError(t, err)
+
+		// Try to verify the image
+		sigs, bundleVerified, err := res.VerifyWithKeychain(ctx, imageRef)
+
+		// We expect verification to succeeded
+		require.Nil(t, err)
+		assert.False(t, bundleVerified)
+		assert.NotNil(t, sigs)
 	})
 
 	t.Run("verify signed image with keyless verification and OIDC identity", func(t *testing.T) {

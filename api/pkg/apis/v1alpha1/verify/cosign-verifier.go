@@ -25,27 +25,37 @@ import (
 	"github.com/sigstore/rekor/pkg/generated/client"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/fulcioroots"
+	"github.com/sigstore/sigstore/pkg/signature"
 )
 
 const (
 	RekorURL = "https://rekor.sigstore.dev"
 )
 
-type VerificationType int
+type VerificationType string
 
 const (
-	KeylessVerification VerificationType = iota
-	CertificateVerification
+	KeylessVerification     VerificationType = "keyless"
+	CertificateVerification VerificationType = "certificate"
+	KeyVerification         VerificationType = "key"
 )
+
+var VerificationTypeMap = map[string]VerificationType{
+	"keyless":     KeylessVerification,
+	"certificate": CertificateVerification,
+	"key":         KeyVerification,
+}
 
 // SignatureVerifier provides methods to verify signatures using Cosign
 type SignatureVerifier struct {
 	// Verification type (keyless or certificate-based)
-	verifyType VerificationType
+	verificationType VerificationType
 	// Root certificates for verification
 	rootCerts *x509.CertPool
 	// Intermediate certificates for verification
 	intermediateCerts *x509.CertPool
+	// Public key for verification
+	publicKey crypto.PublicKey
 	// OIDC identity requirements
 	identities []cosign.Identity
 	// Rekor client for transparency log verification
@@ -54,21 +64,27 @@ type SignatureVerifier struct {
 	rekorPubKeys *cosign.TrustedTransparencyLogPubKeys
 	// CT Log public keys for SCT verification
 	ctLogPubKeys *cosign.TrustedTransparencyLogPubKeys
-	// Whether to skip SCT verification
-	ignoreSCT bool
-	// Whether to skip transparency log verification
-	ignoreTlog bool
 }
 
-func (sv *SignatureVerifier) convertToCheckOpts() *cosign.CheckOpts {
-	switch sv.verifyType {
+func (sv *SignatureVerifier) convertToCheckOpts() (*cosign.CheckOpts, error) {
+	switch sv.verificationType {
 	case CertificateVerification:
 		return &cosign.CheckOpts{
 			RootCerts:         sv.rootCerts,
 			IntermediateCerts: sv.intermediateCerts,
 			IgnoreTlog:        true,
 			IgnoreSCT:         true,
+		}, nil
+	case KeyVerification:
+		verifier, err := signature.LoadVerifier(sv.publicKey, crypto.SHA256)
+		if err != nil {
+			return nil, err
 		}
+		return &cosign.CheckOpts{
+			IgnoreTlog:  true,
+			IgnoreSCT:   true,
+			SigVerifier: verifier,
+		}, nil
 	default: // KeylessVerification
 		return &cosign.CheckOpts{
 			RootCerts:         sv.rootCerts,
@@ -79,14 +95,14 @@ func (sv *SignatureVerifier) convertToCheckOpts() *cosign.CheckOpts {
 			CTLogPubKeys:      sv.ctLogPubKeys,
 			IgnoreSCT:         false,
 			IgnoreTlog:        false,
-		}
+		}, nil
 	}
 }
 
 // WithCertificateVerification configures the verifier for certificate-based verification
 // certPEM and chainPEM are PEM encoded certificate and certificate chain
 func (sv *SignatureVerifier) WithCertificateVerification(certPEM, chainPEM string) (*SignatureVerifier, error) {
-	sv.verifyType = CertificateVerification
+	sv.verificationType = CertificateVerification
 
 	// Parse the certificate
 	certs, err := cryptoutils.UnmarshalCertificatesFromPEM([]byte(certPEM))
@@ -127,9 +143,16 @@ func (sv *SignatureVerifier) WithCertificateVerification(certPEM, chainPEM strin
 	return sv, nil
 }
 
+func (sv *SignatureVerifier) WithKeyVerification(publicKey string) (*SignatureVerifier, error) {
+	sv.verificationType = KeyVerification
+	var err error
+	sv.publicKey, err = cryptoutils.UnmarshalPEMToPublicKey([]byte(publicKey))
+	return sv, err
+}
+
 // WithKeylessVerification configures the verifier for keyless verification using Fulcio and Rekor
 func (sv *SignatureVerifier) WithKeylessVerification(SigningOIDCIssuer, SigningOIDCIdentity string) (*SignatureVerifier, error) {
-	sv.verifyType = KeylessVerification
+	sv.verificationType = KeylessVerification
 
 	// Get Fulcio root certificates if not already set
 	if sv.rootCerts == nil {
@@ -151,7 +174,7 @@ func (sv *SignatureVerifier) WithKeylessVerification(SigningOIDCIssuer, SigningO
 
 	// Initialize rekor client if not already set
 	if sv.rekorClient == nil {
-		rekorClient, err := GetRekorClient()
+		rekorClient, err := rekor.GetRekorClient(RekorURL)
 		if err != nil {
 			return nil, fmt.Errorf("getting rekor client: %w", err)
 		}
@@ -182,11 +205,6 @@ func (sv *SignatureVerifier) WithKeylessVerification(SigningOIDCIssuer, SigningO
 	return sv, nil
 }
 
-// GetRekorClient returns a configured Rekor client
-func GetRekorClient() (*client.Rekor, error) {
-	return rekor.GetRekorClient(RekorURL)
-}
-
 // verifyImage contains the common verification logic
 func (sv *SignatureVerifier) verifyRemoteImage(ctx context.Context, imageRef string, remoteOptions []remote.Option) ([]oci.Signature, bool, error) {
 	// Parse the image reference
@@ -195,7 +213,10 @@ func (sv *SignatureVerifier) verifyRemoteImage(ctx context.Context, imageRef str
 		return nil, false, fmt.Errorf("parsing image reference: %w", err)
 	}
 
-	checkOpts := sv.convertToCheckOpts()
+	checkOpts, err := sv.convertToCheckOpts()
+	if err != nil {
+		return nil, false, err
+	}
 	checkOpts.RegistryClientOpts = []ociremote.Option{
 		ociremote.WithRemoteOptions(remoteOptions...),
 	}
@@ -240,9 +261,12 @@ func (sv *SignatureVerifier) VerifyWithKeychain(ctx context.Context, imageRef st
 // VerifyLocalBlob verifies a signature for a local file and signature
 // verifyBlobWithBundle verifies a blob using a bundle
 func (sv *SignatureVerifier) verifyBlobWithBundle(ctx context.Context, fileContent []byte, b *cosign.LocalSignedPayload) error {
-	checkOpts := sv.convertToCheckOpts()
+	checkOpts, err := sv.convertToCheckOpts()
+	if err != nil {
+		return err
+	}
 
-	// Parse rekor bundle
+	// Parse signature
 	opts := make([]static.Option, 0)
 	targetSig := []byte(b.Base64Signature)
 	var sig string
@@ -252,31 +276,29 @@ func (sv *SignatureVerifier) verifyBlobWithBundle(ctx context.Context, fileConte
 		sig = base64.StdEncoding.EncodeToString(targetSig)
 	}
 
-	if b.Cert == "" {
-		return fmt.Errorf("no certificate found in bundle")
-	}
-
-	certBytes := []byte(b.Cert)
-	if isb64(certBytes) {
-		certBytes, _ = base64.StdEncoding.DecodeString(b.Cert)
-	}
-	bundleCert, err := loadCertFromPEM(certBytes)
-	if err != nil {
-		// check if cert is actually a public key
-		checkOpts.SigVerifier, err = sigs.LoadPublicKeyRaw(certBytes, crypto.SHA256)
+	// Prepare certificate
+	if b.Cert != "" {
+		certBytes := []byte(b.Cert)
+		if isb64(certBytes) {
+			certBytes, _ = base64.StdEncoding.DecodeString(b.Cert)
+		}
+		bundleCert, err := loadCertFromPEM(certBytes)
 		if err != nil {
-			return fmt.Errorf("loading verifier from bundle: %w", err)
+			checkOpts.SigVerifier, err = sigs.LoadPublicKeyRaw(certBytes, crypto.SHA256)
+			if err != nil {
+				return fmt.Errorf("loading verifier from public key: %w", err)
+			}
+		}
+		if bundleCert != nil {
+			certPEM, err := cryptoutils.MarshalCertificateToPEM(bundleCert)
+			if err != nil {
+				return err
+			}
+			opts = append(opts, static.WithCertChain(certPEM, []byte{}))
 		}
 	}
+
 	opts = append(opts, static.WithBundle(b.Bundle))
-	if bundleCert != nil {
-		certPEM, err := cryptoutils.MarshalCertificateToPEM(bundleCert)
-		if err != nil {
-			return err
-		}
-		opts = append(opts, static.WithCertChain(certPEM, []byte{}))
-	}
-
 	signature, err := static.NewSignature(fileContent, sig, opts...)
 	if err != nil {
 		return fmt.Errorf("creating signature: %w", err)
@@ -302,7 +324,6 @@ func (sv *SignatureVerifier) VerifyLocalBlob(ctx context.Context, filePath, bund
 	if err != nil {
 		return fmt.Errorf("failed to parse signature as bundle: %w", err)
 	}
-
 	return sv.verifyBlobWithBundle(ctx, fileContent, b)
 }
 
@@ -337,7 +358,10 @@ func (sv *SignatureVerifier) VerifyOCIChartDigestFromHTTPSignature(ctx context.C
 		return fmt.Errorf("creating signature: %w", err)
 	}
 
-	checkOpts := sv.convertToCheckOpts()
+	checkOpts, err := sv.convertToCheckOpts()
+	if err != nil {
+		return err
+	}
 
 	// Verify the signature using VerifyBlobSignature
 	_, err = cosign.VerifyBlobSignature(ctx, sig, checkOpts)

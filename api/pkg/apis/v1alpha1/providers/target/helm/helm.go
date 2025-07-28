@@ -87,19 +87,20 @@ type (
 	}
 	// HelmChartProperty is the property for the Helm Charts
 	HelmChartProperty struct {
-		Repo                string `json:"repo"`
-		Name                string `json:"name,omitempty"`
-		Signature           string `json:"signature,omitempty"` // optional signature for the chart
-		Version             string `json:"version"`
-		Wait                bool   `json:"wait"`
-		Timeout             string `json:"timeout,omitempty"`
-		Username            string `json:"username,omitempty"`
-		Password            string `json:"password,omitempty"`
-		KeylessSigning      bool   `json:"keylessSigning,omitempty"`      // optional keyless authentication for the chart
-		SigningOIDCIssuer   string `json:"signingOIDCIssuer,omitempty"`   // optional OIDC issuer for signing
-		SigningOIDCIdentity string `json:"signingOIDCIdentity,omitempty"` // optional OIDC identity for signing
-		SigningCert         string `json:"signingCert,omitempty"`         // optional certificate for signing
-		SigningCertChain    string `json:"signingCertChain,omitempty"`    // optional certificate chain for signing
+		Repo                string                  `json:"repo"`
+		Name                string                  `json:"name,omitempty"`
+		Signature           string                  `json:"signature,omitempty"` // optional signature for the chart
+		Version             string                  `json:"version"`
+		Wait                bool                    `json:"wait"`
+		Timeout             string                  `json:"timeout,omitempty"`
+		Username            string                  `json:"username,omitempty"`
+		Password            string                  `json:"password,omitempty"`
+		VerificationType    verify.VerificationType `json:"verificationType,omitempty"`    // optional verificationType for the chart
+		SigningOIDCIssuer   string                  `json:"signingOIDCIssuer,omitempty"`   // optional OIDC issuer for keyless signing
+		SigningOIDCIdentity string                  `json:"signingOIDCIdentity,omitempty"` // optional OIDC identity for keyless signing
+		SigningPublicKey    string                  `json:"signingPublicKey,omitempty"`    // Optional public key for local verification
+		SigningCert         string                  `json:"signingCert,omitempty"`         // optional certificate for signing
+		SigningCertChain    string                  `json:"signingCertChain,omitempty"`    // optional certificate chain for signing
 	}
 )
 
@@ -657,18 +658,24 @@ func (i *HelmTargetProvider) Apply(ctx context.Context, deployment model.Deploym
 func createVerifier(chart *HelmChartProperty) (*verify.SignatureVerifier, error) {
 	verifier := &verify.SignatureVerifier{}
 
-	if chart.KeylessSigning {
+	if chart.VerificationType == verify.KeylessVerification {
 		// Validate required parameters for keyless signing
 		if chart.SigningOIDCIssuer == "" || chart.SigningOIDCIdentity == "" {
 			return nil, fmt.Errorf("SigningOIDCIssuer and SigningOIDCIdentity must be specified for keyless signing")
 		}
 		return verifier.WithKeylessVerification(chart.SigningOIDCIssuer, chart.SigningOIDCIdentity)
-	} else {
+	} else if chart.VerificationType == verify.CertificateVerification {
 		// Validate required parameter for certificate signing
 		if chart.SigningCert == "" {
-			return nil, fmt.Errorf("SigningCert must be specified for certificate-based signing")
+			return nil, fmt.Errorf("SigningCert must be specified for certificate signing")
 		}
 		return verifier.WithCertificateVerification(chart.SigningCert, chart.SigningCertChain)
+	} else {
+		// Default to public key verification
+		if chart.SigningPublicKey == "" {
+			return nil, fmt.Errorf("SigningPublicKey must be specified for public key verification")
+		}
+		return verifier.WithKeyVerification(chart.SigningPublicKey)
 	}
 }
 

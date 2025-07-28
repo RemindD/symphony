@@ -17,14 +17,14 @@ func TestCreateVerifier(t *testing.T) {
 		{
 			name: "create keyless verifier without identity",
 			chart: &HelmChartProperty{
-				KeylessSigning: true,
+				VerificationType: "keyless",
 			},
 			expectError: true,
 		},
 		{
 			name: "create keyless verifier with identity",
 			chart: &HelmChartProperty{
-				KeylessSigning:      true,
+				VerificationType:    "keyless",
 				SigningOIDCIssuer:   "https://token.actions.githubusercontent.com",
 				SigningOIDCIdentity: "https://github.com/example/repo/.github/workflows/release.yml@refs/heads/main",
 			},
@@ -33,7 +33,7 @@ func TestCreateVerifier(t *testing.T) {
 		{
 			name: "create keyless verifier with partial identity",
 			chart: &HelmChartProperty{
-				KeylessSigning:    true,
+				VerificationType:  "keyless",
 				SigningOIDCIssuer: "https://token.actions.githubusercontent.com",
 			},
 			expectError: true,
@@ -41,15 +41,15 @@ func TestCreateVerifier(t *testing.T) {
 		{
 			name: "create certificate verifier without cert",
 			chart: &HelmChartProperty{
-				KeylessSigning: false,
+				VerificationType: "certificate",
 			},
 			expectError: true,
 		},
 		{
 			name: "create certificate verifier with cert",
 			chart: &HelmChartProperty{
-				KeylessSigning: false,
-				SigningCert:    "-----BEGIN CERTIFICATE-----\nMIICUTCCAfugAwIBAgIBADANBgkqhkiG9w0BAQQFADBXMQswCQYDVQQGEwJDTjEL\nMAkGA1UECBMCUE4xCzAJBgNVBAcTAkNOMQswCQYDVQQKEwJPTjELMAkGA1UECxMC\nVU4xFDASBgNVBAMTC0hlcm9uZyBZYW5nMB4XDTA1MDcxNTIxMTk0N1oXDTA1MDgx\nNDIxMTk0N1owVzELMAkGA1UEBhMCQ04xCzAJBgNVBAgTAlBOMQswCQYDVQQHEwJD\nTjELMAkGA1UEChMCT04xCzAJBgNVBAsTAlVOMRQwEgYDVQQDEwtIZXJvbmcgWWFu\nZzBcMA0GCSqGSIb3DQEBAQUAA0sAMEgCQQCp5hnG7ogBhtlynpOS21cBewKE/B7j\nV14qeyslnr26xZUsSVko36ZnhiaO/zbMOoRcKK9vEcgMtcLFuQTWDl3RAgMBAAGj\ngbEwga4wHQYDVR0OBBYEFFXI70krXeQDxZgbaCQoR4jUDncEMH8GA1UdIwR4MHaA\nFFXI70krXeQDxZgbaCQoR4jUDncEoVukWTBXMQswCQYDVQQGEwJDTjELMAkGA1UE\nCBMCUE4xCzAJBgNVBAcTAkNOMQswCQYDVQQKEwJPTjELMAkGA1UECxMCVU4xFDAS\nBgNVBAMTC0hlcm9uZyBZYW5nggEAMAwGA1UdEwQFMAMBAf8wDQYJKoZIhvcNAQEE\nBQADQQA/CFbiKqwn4IzB/8bB7D5fqA8JKRyV+K1zKQQAWVYtDDf+y5nBNb3TBJkx\nZwIcQqTHCI/NXXff4QB1NYyL9BIK\n-----END CERTIFICATE-----",
+				VerificationType: "certificate",
+				SigningCert:      "-----BEGIN CERTIFICATE-----\nMIICUTCCAfugAwIBAgIBADANBgkqhkiG9w0BAQQFADBXMQswCQYDVQQGEwJDTjEL\nMAkGA1UECBMCUE4xCzAJBgNVBAcTAkNOMQswCQYDVQQKEwJPTjELMAkGA1UECxMC\nVU4xFDASBgNVBAMTC0hlcm9uZyBZYW5nMB4XDTA1MDcxNTIxMTk0N1oXDTA1MDgx\nNDIxMTk0N1owVzELMAkGA1UEBhMCQ04xCzAJBgNVBAgTAlBOMQswCQYDVQQHEwJD\nTjELMAkGA1UEChMCT04xCzAJBgNVBAsTAlVOMRQwEgYDVQQDEwtIZXJvbmcgWWFu\nZzBcMA0GCSqGSIb3DQEBAQUAA0sAMEgCQQCp5hnG7ogBhtlynpOS21cBewKE/B7j\nV14qeyslnr26xZUsSVko36ZnhiaO/zbMOoRcKK9vEcgMtcLFuQTWDl3RAgMBAAGj\ngbEwga4wHQYDVR0OBBYEFFXI70krXeQDxZgbaCQoR4jUDncEMH8GA1UdIwR4MHaA\nFFXI70krXeQDxZgbaCQoR4jUDncEoVukWTBXMQswCQYDVQQGEwJDTjELMAkGA1UE\nCBMCUE4xCzAJBgNVBAcTAkNOMQswCQYDVQQKEwJPTjELMAkGA1UECxMCVU4xFDAS\nBgNVBAMTC0hlcm9uZyBZYW5nggEAMAwGA1UdEwQFMAMBAf8wDQYJKoZIhvcNAQEE\nBQADQQA/CFbiKqwn4IzB/8bB7D5fqA8JKRyV+K1zKQQAWVYtDDf+y5nBNb3TBJkx\nZwIcQqTHCI/NXXff4QB1NYyL9BIK\n-----END CERTIFICATE-----",
 			},
 			expectError: false,
 		},
