@@ -431,6 +431,48 @@ func TestVerifyLocalBlob(t *testing.T) {
 		assert.True(t, strings.Contains(err.Error(), "creating signature") ||
 			strings.Contains(err.Error(), "signature verification failed"))
 	})
+
+	t.Run("verify signed local chart with keyless verification and OIDC identity", func(t *testing.T) {
+		ctx := context.Background()
+		verifier := &SignatureVerifier{}
+
+		// Configure for keyless verification with expected OIDC identity
+		res, err := verifier.WithKeylessVerification("https://github.com/login/oauth", ".*")
+		require.NoError(t, err)
+
+		// Try to verify the image with keyless verification
+		chartPath := "./testdata/LocalChart/podinfo-6.9.1.tgz"
+		signaturePath := "./testdata/LocalChart/podinfo-6.9.1.tgz.bundle"
+		err = res.VerifyLocalBlob(ctx, chartPath, signaturePath)
+
+		// Now we expect verification to succeed with keyless mode
+		require.NoError(t, err, "keyless verification should succeed")
+	})
+
+	t.Run("verify signed local chart with key verification", func(t *testing.T) {
+		ctx := context.Background()
+		verifier := &SignatureVerifier{}
+		key := `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs2ZkSKt/TWU8Fo/cB2cc
+MYkDgp5N+rayrPqxAoBYa/uJCXiJeW9uM+DSwnvt9rbbb6iy0qHE0SOPpRi51VDf
+wFlOWlTK/0SYWIzTe15UFp2es2JXP5+NnB2tuvwNqto9+JB/Pa8/LJQtJMWsvgtL
+/gwEDBMk2VZapfMFik1ChQDkMI+LNmv5iAgTnb7z9moW3qOuP33yjOEngybtuV2H
+lHAQy9Ct9TZJQYHeb2y12oRVk6LZ5Pz4TzCwM2Vglcg2BphwmmMSLfG8pwoIJvL9
+sFWf4kArKVvkGlylSgQS+vAtQm/Yxm8F5/NQ7oo0Mgly/iLRGVYwgj7g8LS5JsMo
+3QIDAQAB
+-----END PUBLIC KEY-----`
+		// Configure for keyless verification with expected OIDC identity
+		res, err := verifier.WithKeyVerification(key)
+		require.NoError(t, err)
+
+		// Try to verify the image with key verification
+		chartPath := "./testdata/LocalChart/podinfo-6.9.1.tgz"
+		signaturePath := "./testdata/LocalChart/podinfo-6.9.1.tgz.key.bundle"
+		err = res.VerifyLocalBlob(ctx, chartPath, signaturePath)
+
+		// Now we expect verification to succeed with key verification
+		require.NoError(t, err, "key verification should succeed")
+	})
 }
 func TestBase64Encoding(t *testing.T) {
 	// Test that our base64 encoding logic works correctly
